@@ -77,7 +77,8 @@ jobs:
           fi
 
       - name: Apply D1 migrations
-        run: npx wrangler d1 migrations apply workerbbs --remote --yes
+        # 该版本 wrangler 无 --yes，用 echo "y" 喂交互确认（无待应用迁移时多喂的 y 无害）
+        run: echo "y" | npx wrangler d1 migrations apply workerbbs --remote
 
       - name: Seed admin account
         run: node scripts/seed-admin.mjs
