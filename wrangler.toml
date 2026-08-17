@@ -1,14 +1,35 @@
 name = "workerbbs"
 main = "src/index.ts"
-compatibility_date = "2024-10-22"
+compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-# D1 database binding (Cloudflare's serverless SQLite)
+# 部署到 *.workers.dev（免费）。若要绑定自己的域名，见 README「自定义域名」一节。
+workers_dev = true
+
+# ===== 静态资源（前端 SPA）=====
+# 由 Worker 通过 env.ASSETS 提供；非 /api/* 的请求回退到 index.html（SPA）
+[assets]
+directory = "public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# ===== 环境变量（非密钥，可提交）=====
+[vars]
+SITE_NAME = "WorkerBBS"
+
+# ===== D1 数据库 =====
+# 首次部署前请先执行: wrangler d1 create workerbbs
+# 然后把返回的 database_id 填到下面
 [[d1_databases]]
 binding = "DB"
 database_name = "workerbbs"
-# 本地开发可用占位 id；部署到 Cloudflare 前请执行：
-#   wrangler d1 create workerbbs
-# 并把返回的 database_id 填到下面。
-database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "migrations"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# ===== R2 存储桶（头像 / 背景图 / 附件）=====
+# 首次部署前请先执行: wrangler r2 bucket create workerbbs-assets
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "workerbbs-assets"
+
+# 自定义域名（可选，取消注释并改成你的域名）：
+# routes = [{ pattern = "forum.example.com", custom_domain = true }]
