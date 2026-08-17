@@ -40,21 +40,20 @@ jobs:
           npx wrangler d1 create workerbbs >/tmp/d1_create.log 2>&1 || true
 
           echo "==> 2/5 查询 D1 database_id"
-          # 关键修复：必须加 || true，否则 d1 info 一旦失败，set -e 会直接在这里中止，
-          # 导致下面“打印原始报错”的分支永远走不到（正是之前只看到 exit 1 的原因）。
-          DB_OUT=$(npx wrangler d1 info workerbbs 2>/tmp/d1_info_err) || true
-          DB_ID=$(printf '%s' "$DB_OUT" | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1)
-
-          # 首次创建成功时 id 只在 create 输出里，补一份兜底
+          # 关键：不能用 `d1 info workerbbs`！它会按库名去 wrangler.toml 找 [[d1_databases]] 绑定，
+          # 然后拿【还是占位符的】database_id（REPLACE_WITH_YOUR_D1_DATABASE_ID）去查 API → 404（代码 7404）。
+          # 改用 `d1 list`（按账户列出全部库），用库名匹配取真实 uuid。
+          LIST_OUT=$(npx wrangler d1 list 2>/tmp/d1_list_err) || true
+          DB_ID=$(printf '%s' "$LIST_OUT" | grep -iE 'workerbbs' | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1)
           if [ -z "$DB_ID" ]; then
-            DB_ID=$(grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' /tmp/d1_create.log /tmp/d1_info_err | head -1)
+            DB_ID=$(printf '%s' "$LIST_OUT" | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1)
           fi
 
           if [ -z "$DB_ID" ]; then
-            echo "::error::无法获取 D1 database_id，以下是 Cloudflare 原始输出："
+            echo "::error::无法从 d1 list 获取 D1 database_id，以下是 Cloudflare 原始输出："
             echo "----- d1 create 输出 -----"; cat /tmp/d1_create.log
-            echo "----- d1 info 输出 -----";  cat /tmp/d1_info_err
-            if grep -qiE 'authentication|unauthorized|invalid.*token|10000|9109|permission|forbidden' /tmp/d1_create.log /tmp/d1_info_err; then
+            echo "----- d1 list 输出 -----";  cat /tmp/d1_list_err
+            if grep -qiE 'authentication|unauthorized|invalid.*token|10000|9109|permission|forbidden' /tmp/d1_create.log /tmp/d1_list_err; then
               echo "👉 极可能是 CLOUDFLARE_API_TOKEN 无效或权限不足（需要 Account · D1:Edit）。"
             fi
             echo "也请确认 CLOUDFLARE_ACCOUNT_ID 正确、且数据库名 workerbbs 未被占用。"
