@@ -29,6 +29,25 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # 自动创建 D1 数据库与 R2 桶，并把真实 database_id 注入 wrangler.toml
+      # （这样你只需在 Secrets 里填 5 个变量，无需手动改 toml）
+      - name: Provision D1 & R2 and inject database_id
+        run: |
+          set -e
+          # 1) 取 D1 数据库 id（存在则查，不存在则建）
+          DB_JSON=$(npx wrangler d1 info workerbbs --json 2>/dev/null \
+                    || npx wrangler d1 create workerbbs --json 2>/dev/null)
+          DB_ID=$(echo "$DB_JSON" | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1)
+          if [ -z "$DB_ID" ]; then
+            echo "::error::无法获取 D1 database_id，请检查 CLOUDFLARE_API_TOKEN 是否具备 D1:Edit 权限"
+            exit 1
+          fi
+          echo "D1 database_id = $DB_ID"
+          # 2) 把占位符替换为真实 id
+          sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$DB_ID/" wrangler.toml
+          # 3) 创建 R2 桶（已存在则忽略报错）
+          npx wrangler r2 bucket create workerbbs-assets 2>/dev/null || true
+
       - name: Apply D1 migrations
         run: npx wrangler d1 migrations apply workerbbs --remote --yes
 
