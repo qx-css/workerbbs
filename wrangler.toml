@@ -1,0 +1,14 @@
+name = "workerbbs"
+main = "src/index.ts"
+compatibility_date = "2024-10-22"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 database binding (Cloudflare's serverless SQLite)
+[[d1_databases]]
+binding = "DB"
+database_name = "workerbbs"
+# 本地开发可用占位 id；部署到 Cloudflare 前请执行：
+#   wrangler d1 create workerbbs
+# 并把返回的 database_id 填到下面。
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
