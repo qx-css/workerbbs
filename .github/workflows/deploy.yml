@@ -35,22 +35,26 @@ jobs:
       - name: Provision D1 & R2 and inject database_id
         run: |
           set -e
-          # 1) 取 D1 数据库 id（存在则查，不存在则建）
-          DB_JSON=$(npx wrangler d1 info workerbbs --json 2>/dev/null \
-                    || npx wrangler d1 create workerbbs --json 2>/dev/null)
-          DB_ID=$(echo "$DB_JSON" | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1)
+          # 1) 确保 D1 数据库存在（已存在则忽略报错，做到幂等）
+          npx wrangler d1 create workerbbs --json >/tmp/d1_create.log 2>&1 || true
+          # 2) 现在一定能查到 id（输出原始错误便于排查）
+          DB_OUT=$(npx wrangler d1 info workerbbs --json 2>/tmp/d1_info_err)
+          DB_ID=$(printf '%s' "$DB_OUT" | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1)
           if [ -z "$DB_ID" ]; then
-            echo "::error::无法获取 D1 database_id，请检查 CLOUDFLARE_API_TOKEN 是否具备 D1:Edit 权限"
+            echo "::error::无法获取 D1 database_id，以下是 Cloudflare 原始报错："
+            echo "----- d1 create 输出 -----"; cat /tmp/d1_create.log
+            echo "----- d1 info 错误 -----";  cat /tmp/d1_info_err
+            echo "请确认 CLOUDFLARE_API_TOKEN 具备 Account · D1:Edit 权限，且 CLOUDFLARE_ACCOUNT_ID 正确。"
             exit 1
           fi
           echo "D1 database_id = $DB_ID"
-          # 2) 把占位符替换为真实 id
+          # 3) 把占位符替换为真实 id
           sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$DB_ID/" wrangler.toml
-          # 3) 创建 R2 桶（已存在则忽略报错）
-          npx wrangler r2 bucket create workerbbs-assets 2>/dev/null || true
-          # 4) 注入自定义域名（Cloudflare 部署时会自动加 DNS）；未设置则移除该行
+          # 4) 创建 R2 桶（已存在则忽略报错）
+          npx wrangler r2 bucket create workerbbs-assets >/tmp/r2.log 2>&1 || true
+          # 5) 注入自定义域名（Cloudflare 部署时会自动加 DNS）；未设置则移除该行
           if [ -n "$CUSTOM_DOMAIN" ]; then
-            sed -i "s/REPLACE_WITH_YOUR_CUSTOM_DOMAIN/$CUSTOM_DOMAIN/" wrangler.toml
+            sed -i "s|REPLACE_WITH_YOUR_CUSTOM_DOMAIN|$CUSTOM_DOMAIN|" wrangler.toml
             echo "自定义域名 = $CUSTOM_DOMAIN（部署时将自动添加 DNS）"
           else
             echo "未设置 CUSTOM_DOMAIN，部署到 *.workers.dev"
