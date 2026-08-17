@@ -14,10 +14,13 @@ function getCookie(c: any, name: string): string | undefined {
   const m = h.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
   return m ? m[1] : undefined;
 }
-function setCookie(c: any, name: string, value: string, maxAge?: number) {
+// 生成 Set-Cookie 头字符串。
+// 重要：必须手动挂到最终返回的 Response 上——本项目的 ok()/fail() 直接 new Response(...)
+// 返回，不会携带 c.header() 设置的头，否则登录/注册响应里就没有 Set-Cookie，导致前端收不到会话。
+function cookieHeader(name: string, value: string, maxAge?: number): string {
   let s = name + '=' + value + '; Path=/; HttpOnly; SameSite=Lax';
   if (maxAge !== undefined) s += '; Max-Age=' + maxAge;
-  c.header('Set-Cookie', s);
+  return s;
 }
 
 /* ---------- 中间件：加载当前登录用户 ---------- */
@@ -100,8 +103,9 @@ app.post('/api/auth/register', async (c) => {
   const id = await db.createUser(c.env.DB, { username, email, passHash });
   const sid = await db.createSession(c.env.DB, id, db.SESSION_TTL);
   const u = await db.getUserById(c.env.DB, id);
-  setCookie(c, SID, sid, db.SESSION_TTL);
-  return ok({ user: db.toPublicUser(u!) }, 201);
+  const res = ok({ user: db.toPublicUser(u!) }, 201);
+  res.headers.set('Set-Cookie', cookieHeader(SID, sid, db.SESSION_TTL));
+  return res;
 });
 
 // 登录
@@ -117,16 +121,18 @@ app.post('/api/auth/login', async (c) => {
   const okPwd = await verifyPassword(password, u.pass_hash);
   if (!okPwd) return fail('账号或密码错误', 401);
   const sid = await db.createSession(c.env.DB, u.id, db.SESSION_TTL);
-  setCookie(c, SID, sid, db.SESSION_TTL);
-  return ok({ user: db.toPublicUser(u) });
+  const res = ok({ user: db.toPublicUser(u) });
+  res.headers.set('Set-Cookie', cookieHeader(SID, sid, db.SESSION_TTL));
+  return res;
 });
 
 // 登出
 app.post('/api/auth/logout', async (c) => {
   const sid = getCookie(c, SID);
   await db.deleteSession(c.env.DB, sid);
-  setCookie(c, SID, '', 0);
-  return ok({ ok: true });
+  const res = ok({ ok: true });
+  res.headers.set('Set-Cookie', cookieHeader(SID, '', 0));
+  return res;
 });
 
 /* ============================================================
