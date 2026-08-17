@@ -1,6 +1,5 @@
 export interface Bindings {
   DB: D1Database;
-  BUCKET: R2Bucket;
   ASSETS: Fetcher;
   SITE_NAME?: string;
 }

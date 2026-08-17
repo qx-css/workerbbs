@@ -30,8 +30,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      # 自动创建 D1 数据库与 R2 桶，并把真实 database_id 注入 wrangler.toml
-      # （这样你只需在 Secrets 里填 5 个变量，无需手动改 toml）
+      # 自动创建 D1 数据库，并把真实 database_id 注入 wrangler.toml
+      # （无需 R2：头像/背景图以 base64 直接存进 D1）
       - name: Provision D1 & R2 and inject database_id
         run: |
           set -e
@@ -64,23 +64,7 @@ jobs:
           echo "==> 3/5 注入 database_id 到 wrangler.toml"
           sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$DB_ID/" wrangler.toml
 
-          echo "==> 4/5 创建 R2 存储桶（已存在则忽略）"
-          # 同样必须加 || true（避免 set -e 提前中止），但创建后用 list 真实验证桶是否真的存在
-          npx wrangler r2 bucket create workerbbs-assets >/tmp/r2.log 2>&1 || true
-          R2_LIST=$(npx wrangler r2 bucket list 2>/tmp/r2_list_err) || true
-          if ! printf '%s' "$R2_LIST" | grep -q 'workerbbs-assets'; then
-            echo "::error::R2 桶 workerbbs-assets 创建失败或查询不到，以下是 Cloudflare 原始输出："
-            echo "----- r2 create 输出 -----"; cat /tmp/r2.log
-            echo "----- r2 list 输出 -----";   cat /tmp/r2_list_err
-            if grep -qiE 'authentication|unauthorized|invalid.*token|10000|9109|permission|forbidden|R2' /tmp/r2.log /tmp/r2_list_err; then
-              echo "👉 极可能是 CLOUDFLARE_API_TOKEN 缺少 Account · R2:Edit 权限（R2 桶创建/读取都需要）。"
-            fi
-            echo "也请确认 Cloudflare 账户已开通 R2（首次需在 Dashboard 点击开通，且桶名全局唯一）。"
-            exit 1
-          fi
-          echo "R2 bucket workerbbs-assets 已就绪"
-
-          echo "==> 5/5 处理自定义域名"
+          echo "==> 4/5 处理自定义域名"
           if [ -n "$CUSTOM_DOMAIN" ]; then
             sed -i "s|REPLACE_WITH_YOUR_CUSTOM_DOMAIN|$CUSTOM_DOMAIN|" wrangler.toml
             echo "自定义域名 = $CUSTOM_DOMAIN（部署时将自动添加 DNS，需 Token 具备 DNS:Edit）"

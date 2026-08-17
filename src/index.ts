@@ -252,41 +252,22 @@ app.patch('/api/me', async (c) => {
   const b = await readJson(c);
   const fields: Record<string, unknown> = {};
   if (typeof b.bio === 'string') fields.bio = b.bio.slice(0, 500);
-  if (typeof b.avatar === 'string') fields.avatar = b.avatar;
-  if (typeof b.bg_image === 'string') fields.bg_image = b.bg_image;
+  if (typeof b.avatar === 'string') {
+    if (b.avatar.length > 1_000_000) return fail('头像图片太大，请压缩后再上传', 413);
+    fields.avatar = b.avatar;
+  }
+  if (typeof b.bg_image === 'string') {
+    if (b.bg_image.length > 1_000_000) return fail('背景图太大，请压缩后再上传', 413);
+    fields.bg_image = b.bg_image;
+  }
   if (Object.keys(fields).length) await db.updateUser(c.env.DB, u.id, fields);
   const updated = await db.getUserById(c.env.DB, u.id);
   return ok({ user: db.toPublicUser(updated!) });
 });
 
-// 上传文件到 R2（头像 / 背景图），返回 key
-app.post('/api/upload', async (c) => {
-  const u = user(c);
-  if (!u) return fail('请先登录', 401);
-  const form = await c.req.parseBody({ all: true });
-  const file = form['file'];
-  const folder = String(form['folder'] || 'misc');
-  if (!(file instanceof File)) return fail('未收到文件');
-  const buf = new Uint8Array(await file.arrayBuffer());
-  const ext = (file.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5);
-  const key = `${folder}/${u.id}-${crypto.randomUUID()}.${ext}`;
-  await c.env.BUCKET.put(key, buf, { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
-  return ok({ key, url: `/api/file/${key}` });
-});
-
-// 从 R2 读取文件（头像 / 背景）
-app.get('/api/file/:key', async (c) => {
-  const key = c.req.param('key');
-  if (!key || key.includes('..') || key.startsWith('/')) return fail('非法路径', 400);
-  const obj = await c.env.BUCKET.get(key);
-  if (!obj) return fail('文件不存在', 404);
-  return new Response(obj.body, {
-    headers: {
-      'content-type': obj.httpMetadata?.contentType || 'application/octet-stream',
-      'cache-control': 'public, max-age=31536000, immutable',
-    },
-  });
-});
+// 图片（头像 / 背景图）以 base64 data URL 直接存进 D1，不依赖 R2。
+// 上传由前端把图片转成 data URL 后通过 PATCH /api/me 或 POST /api/admin/settings 写入，
+// toPublicUser 会把该 data URL 原样返回，前端直接作为 <img src> 渲染。
 
 /* ============================================================
  *  后台管理（仅管理员）
@@ -314,7 +295,10 @@ app.post('/api/admin/settings', async (c) => {
   const b = await readJson(c);
   if (typeof b.site_name === 'string') await db.setSetting(c.env.DB, 'site_name', b.site_name);
   if (typeof b.site_accent === 'string') await db.setSetting(c.env.DB, 'site_accent', b.site_accent);
-  if (typeof b.site_bg === 'string') await db.setSetting(c.env.DB, 'site_bg', b.site_bg);
+  if (typeof b.site_bg === 'string') {
+    if (b.site_bg.length > 1_000_000) return fail('背景图太大，请压缩后再上传', 413);
+    await db.setSetting(c.env.DB, 'site_bg', b.site_bg);
+  }
   if (typeof b.site_desc === 'string') await db.setSetting(c.env.DB, 'site_desc', b.site_desc);
   return ok({ ok: true });
 });

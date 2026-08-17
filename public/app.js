@@ -13,7 +13,7 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const avatarHTML = (u) =>
     u && u.avatar
-      ? '<span class="avatar"><img src="/api/file/' + esc(u.avatar) + '" alt=""></span>'
+      ? '<span class="avatar"><img src="' + esc(u.avatar) + '" alt=""></span>'
       : '<span class="avatar">' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
 
   async function api(path, opts) {
@@ -21,13 +21,6 @@
     opts.credentials = 'same-origin';
     opts.headers = Object.assign({ 'content-type': 'application/json' }, opts.headers || {});
     const res = await fetch(path, opts);
-    let data = null;
-    try { data = await res.json(); } catch (e) {}
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status);
-    return data;
-  }
-  async function apiForm(path, form) {
-    const res = await fetch(path, { method: 'POST', body: form, credentials: 'same-origin' });
     let data = null;
     try { data = await res.json(); } catch (e) {}
     if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status);
@@ -81,7 +74,7 @@
 
   function applyTheme() {
     document.documentElement.style.setProperty('--accent', SETTINGS.site_accent || '#0f6cbd');
-    if (SETTINGS.site_bg) bg.style.backgroundImage = 'url(/api/file/' + SETTINGS.site_bg + ')';
+    if (SETTINGS.site_bg) bg.style.backgroundImage = 'url(' + SETTINGS.site_bg + ')';
     document.title = SETTINGS.site_name || 'WorkerBBS';
   }
 
@@ -232,11 +225,11 @@
     const my = await api('/api/users/' + encodeURIComponent(u.username));
     document.getElementById('myThreads').innerHTML = (my.threads || []).map(threadCard).join('') || '<div class="empty">还没有发帖</div>';
 
-    document.getElementById('upAvatar').onclick = () => pickFile('avatars', async (key) => {
-      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ avatar: key }) }); await refreshMe(); viewProfile();
+    document.getElementById('upAvatar').onclick = () => pickImage(256, 0.85, async (dataUrl) => {
+      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ avatar: dataUrl }) }); await refreshMe(); viewProfile();
     });
-    document.getElementById('upBg').onclick = () => pickFile('bgs', async (key) => {
-      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ bg_image: key }) }); await refreshMe(); viewProfile();
+    document.getElementById('upBg').onclick = () => pickImage(1280, 0.75, async (dataUrl) => {
+      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ bg_image: dataUrl }) }); await refreshMe(); viewProfile();
     });
     document.getElementById('saveProfile').onclick = async () => {
       const bio = document.getElementById('bio').value;
@@ -281,11 +274,11 @@
       + '<h3 style="margin-top:24px;font-size:14px;color:#5b5b5b;">帖子管理</h3><div id="threadAdmin"></div>'
       + '</div>';
     document.querySelectorAll('#sw .swatch').forEach((s) => s.onclick = () => (document.getElementById('sAccent').value = s.dataset.c));
-    document.getElementById('sBg').onclick = () => pickFile('bgs', async (key) => { document.getElementById('sBg').dataset.key = key; document.getElementById('sBg').textContent = '已选背景，保存生效'; });
+    document.getElementById('sBg').onclick = () => pickImage(1920, 0.75, async (dataUrl) => { document.getElementById('sBg').dataset.data = dataUrl; document.getElementById('sBg').textContent = '已选背景，保存生效'; });
     document.getElementById('saveSite').onclick = async () => {
       const payload = { site_name: document.getElementById('sName').value, site_desc: document.getElementById('sDesc').value, site_accent: document.getElementById('sAccent').value };
-      const bgKey = document.getElementById('sBg').dataset.key;
-      if (bgKey) payload.site_bg = bgKey;
+      const bgData = document.getElementById('sBg').dataset.data;
+      if (bgData) payload.site_bg = bgData;
       await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
       SETTINGS = await api('/api/settings'); applyTheme();
       alert('站点设置已保存');
@@ -335,16 +328,43 @@
     });
   }
 
-  /* ===== 文件上传 ===== */
-  function pickFile(folder, cb) {
+  /* ===== 图片上传（转 base64 直接存 D1，无需 R2） ===== */
+  // maxDim: 最长边像素上限；quality: JPEG 压缩质量（越小越省空间）
+  function pickImage(maxDim, quality, cb) {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*';
     inp.onchange = async () => {
       const f = inp.files[0]; if (!f) return;
-      const fd = new FormData(); fd.append('file', f); fd.append('folder', folder);
-      try { const d = await apiForm('/api/upload', fd); await cb(d.key); } catch (e) { alert(e.message); }
+      try {
+        const dataUrl = await fileToDataURL(f, maxDim, quality);
+        await cb(dataUrl);
+      } catch (e) { alert(e.message || '图片处理失败'); }
     };
     inp.click();
+  }
+
+  // 读取图片 -> 等比缩放到 maxDim 以内 -> 输出 JPEG data URL（控制体积，适配 D1 单字段 1MB 上限）
+  function fileToDataURL(file, maxDim, quality) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('读取文件失败'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('无法解析图片'));
+        img.onload = () => {
+          let { width, height } = img;
+          const scale = Math.min(1, maxDim / Math.max(width, height));
+          width = Math.round(width * scale); height = Math.round(height * scale);
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
   }
 
   async function refreshMe() { try { const d = await api('/api/me'); ME = d.user; } catch (e) { ME = null; } }

@@ -31,8 +31,6 @@ binding = "DB"
 database_name = "workerbbs"
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
-# ===== R2 存储桶（头像 / 背景图 / 附件）=====
-# 首次部署前请先执行: wrangler r2 bucket create workerbbs-assets
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "workerbbs-assets"
+# ===== 文件存储说明 =====
+# 本站不依赖 R2：头像 / 背景图以 base64 data URL 直接存进 D1 的 users 表与 settings 表。
+# 因此无需配置任何 R2 桶，也不需要在 Cloudflare 开通 R2。
