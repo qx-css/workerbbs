@@ -35,11 +35,11 @@ jobs:
       - name: Provision D1 & R2 and inject database_id
         run: |
           set -e
-          echo "==> 1/5 创建 D1 数据库（已存在则忽略，幂等）"
+          echo "==> 1/4 创建 D1 数据库（已存在则忽略，幂等）"
           # 不依赖 --json：无论 table 还是 JSON 输出，下面都用正则抓 UUID
           npx wrangler d1 create workerbbs >/tmp/d1_create.log 2>&1 || true
 
-          echo "==> 2/5 查询 D1 database_id"
+          echo "==> 2/4 查询 D1 database_id"
           # 关键：不能用 `d1 info workerbbs`！它会按库名去 wrangler.toml 找 [[d1_databases]] 绑定，
           # 然后拿【还是占位符的】database_id（REPLACE_WITH_YOUR_D1_DATABASE_ID）去查 API → 404（代码 7404）。
           # 改用 `d1 list`（按账户列出全部库），用库名匹配取真实 uuid。
@@ -61,10 +61,10 @@ jobs:
           fi
           echo "D1 database_id = $DB_ID"
 
-          echo "==> 3/5 注入 database_id 到 wrangler.toml"
+          echo "==> 3/4 注入 database_id 到 wrangler.toml"
           sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$DB_ID/" wrangler.toml
 
-          echo "==> 4/5 处理自定义域名"
+          echo "==> 4/4 处理自定义域名"
           if [ -n "$CUSTOM_DOMAIN" ]; then
             sed -i "s|REPLACE_WITH_YOUR_CUSTOM_DOMAIN|$CUSTOM_DOMAIN|" wrangler.toml
             echo "自定义域名 = $CUSTOM_DOMAIN（部署时将自动添加 DNS，需 Token 具备 DNS:Edit）"
