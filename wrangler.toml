@@ -8,9 +8,9 @@ workers_dev = true
 
 # 自定义域名（可选）：部署时 Cloudflare 会自动为该域名添加 DNS 记录。
 # 域名由 GitHub Secrets 的 CUSTOM_DOMAIN 注入；若未设置则 CI 会自动删除本行。
-# 注意：必须放在根层级（任意 [table] / [[array]] 之前），否则会被 TOML 吸收进它前面的
-#       [[r2_buckets]] 而失效（wrangler 会报 "unexpected field custom_domains"）。
-custom_domains = [{ domain = "REPLACE_WITH_YOUR_CUSTOM_DOMAIN" }]
+# 使用 routes + custom_domain=true（wrangler 3.x 支持的写法，会自动加 DNS）。
+# 注意：必须放在根层级，否则会被 TOML 吸收进它前面的 [[r2_buckets]] 而失效。
+routes = [{ pattern = "REPLACE_WITH_YOUR_CUSTOM_DOMAIN", custom_domain = true }]
 
 # ===== 静态资源（前端 SPA）=====
 # 由 Worker 通过 env.ASSETS 提供；非 /api/* 的请求回退到 index.html（SPA）
