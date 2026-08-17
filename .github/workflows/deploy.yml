@@ -35,27 +35,43 @@ jobs:
       - name: Provision D1 & R2 and inject database_id
         run: |
           set -e
-          # 1) 确保 D1 数据库存在（已存在则忽略报错，做到幂等）
-          npx wrangler d1 create workerbbs --json >/tmp/d1_create.log 2>&1 || true
-          # 2) 现在一定能查到 id（输出原始错误便于排查）
-          DB_OUT=$(npx wrangler d1 info workerbbs --json 2>/tmp/d1_info_err)
+          echo "==> 1/5 创建 D1 数据库（已存在则忽略，幂等）"
+          # 不依赖 --json：无论 table 还是 JSON 输出，下面都用正则抓 UUID
+          npx wrangler d1 create workerbbs >/tmp/d1_create.log 2>&1 || true
+
+          echo "==> 2/5 查询 D1 database_id"
+          # 关键修复：必须加 || true，否则 d1 info 一旦失败，set -e 会直接在这里中止，
+          # 导致下面“打印原始报错”的分支永远走不到（正是之前只看到 exit 1 的原因）。
+          DB_OUT=$(npx wrangler d1 info workerbbs 2>/tmp/d1_info_err) || true
           DB_ID=$(printf '%s' "$DB_OUT" | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' | head -1)
+
+          # 首次创建成功时 id 只在 create 输出里，补一份兜底
           if [ -z "$DB_ID" ]; then
-            echo "::error::无法获取 D1 database_id，以下是 Cloudflare 原始报错："
+            DB_ID=$(grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' /tmp/d1_create.log /tmp/d1_info_err | head -1)
+          fi
+
+          if [ -z "$DB_ID" ]; then
+            echo "::error::无法获取 D1 database_id，以下是 Cloudflare 原始输出："
             echo "----- d1 create 输出 -----"; cat /tmp/d1_create.log
-            echo "----- d1 info 错误 -----";  cat /tmp/d1_info_err
-            echo "请确认 CLOUDFLARE_API_TOKEN 具备 Account · D1:Edit 权限，且 CLOUDFLARE_ACCOUNT_ID 正确。"
+            echo "----- d1 info 输出 -----";  cat /tmp/d1_info_err
+            if grep -qiE 'authentication|unauthorized|invalid.*token|10000|9109|permission|forbidden' /tmp/d1_create.log /tmp/d1_info_err; then
+              echo "👉 极可能是 CLOUDFLARE_API_TOKEN 无效或权限不足（需要 Account · D1:Edit）。"
+            fi
+            echo "也请确认 CLOUDFLARE_ACCOUNT_ID 正确、且数据库名 workerbbs 未被占用。"
             exit 1
           fi
           echo "D1 database_id = $DB_ID"
-          # 3) 把占位符替换为真实 id
+
+          echo "==> 3/5 注入 database_id 到 wrangler.toml"
           sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$DB_ID/" wrangler.toml
-          # 4) 创建 R2 桶（已存在则忽略报错）
+
+          echo "==> 4/5 创建 R2 存储桶（已存在则忽略）"
           npx wrangler r2 bucket create workerbbs-assets >/tmp/r2.log 2>&1 || true
-          # 5) 注入自定义域名（Cloudflare 部署时会自动加 DNS）；未设置则移除该行
+
+          echo "==> 5/5 处理自定义域名"
           if [ -n "$CUSTOM_DOMAIN" ]; then
             sed -i "s|REPLACE_WITH_YOUR_CUSTOM_DOMAIN|$CUSTOM_DOMAIN|" wrangler.toml
-            echo "自定义域名 = $CUSTOM_DOMAIN（部署时将自动添加 DNS）"
+            echo "自定义域名 = $CUSTOM_DOMAIN（部署时将自动添加 DNS，需 Token 具备 DNS:Edit）"
           else
             echo "未设置 CUSTOM_DOMAIN，部署到 *.workers.dev"
             sed -i '/REPLACE_WITH_YOUR_CUSTOM_DOMAIN/d' wrangler.toml
