@@ -81,19 +81,23 @@ ADMIN_EMAIL=you@example.com ADMIN_USERNAME=admin ADMIN_PASSWORD=yourpass npm run
    | `ADMIN_EMAIL` | 管理员邮箱（首次部署创建，已存在则跳过） |
    | `ADMIN_USERNAME` | 管理员用户名（默认 `admin`） |
    | `ADMIN_PASSWORD` | 管理员密码 |
+   | `CUSTOM_DOMAIN` | **（可选）** 自定义访问域名，如 `bbs.example.com`。设置后 Cloudflare 在部署时**自动为其添加 DNS 记录**，无需手动操作 |
 
-4. 推送到 `main` 分支，GitHub Actions 会自动：应用 D1 迁移 → 创建管理员 → 部署 Worker。
+4. 推送到 `main` 分支，GitHub Actions 会自动：创建 D1/R2 → 注入 database_id 与自定义域名 → 应用 D1 迁移 → 创建管理员 → 部署 Worker（含自动加 DNS）。
 
-> 这些就是你说的「Action 环境变量」：Cloudflare Worker API、账户 ID、访问域名所需的账户凭证，以及管理员邮箱 / 账户 / 密码。填好后 push 即自动部署。
+> 这些就是你说的「Action 环境变量」：Cloudflare Worker API、账户 ID、访问域名、以及管理员邮箱 / 账户 / 密码。填好后 push 即自动部署。
 
-### 自定义访问域名
+### 自定义访问域名（自动加 DNS）
 
-`wrangler.toml` 默认 `workers_dev = true`，部署后访问 `https://workerbbs.<subdomain>.workers.dev`。
-若要绑定自己的域名，在 `wrangler.toml` 末尾取消注释并改成你的域名：
+`wrangler.toml` 默认 `workers_dev = true`，部署后默认访问 `https://workerbbs.<subdomain>.workers.dev`。
 
-```toml
-routes = [{ pattern = "forum.example.com", custom_domain = true }]
-```
+若要绑定自己的域名，**只需在 Secrets 里填 `CUSTOM_DOMAIN`**（例如 `bbs.example.com`）。CI 会自动把它注入 `wrangler.toml` 的 `custom_domains`，部署时 Cloudflare **自动创建该域名的 DNS 记录**，无需你手动去 DNS 面板加解析。
+
+前提：
+- 该域名已在 **同一个 Cloudflare 账户**（即 `CLOUDFLARE_ACCOUNT_ID`）下，且 zone 状态为 `Active`；
+- API Token 需有该 zone 的 `DNS:Edit` 权限（用 "Edit Cloudflare Workers" 模板通常已包含）。
+
+若未设置 `CUSTOM_DOMAIN`，则只部署到 `*.workers.dev`，不影响使用。
 
 ## 接口一览（前缀 `/api`）
 

@@ -19,6 +19,7 @@ jobs:
       ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
       ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+      CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +48,14 @@ jobs:
           sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$DB_ID/" wrangler.toml
           # 3) 创建 R2 桶（已存在则忽略报错）
           npx wrangler r2 bucket create workerbbs-assets 2>/dev/null || true
+          # 4) 注入自定义域名（Cloudflare 部署时会自动加 DNS）；未设置则移除该行
+          if [ -n "$CUSTOM_DOMAIN" ]; then
+            sed -i "s/REPLACE_WITH_YOUR_CUSTOM_DOMAIN/$CUSTOM_DOMAIN/" wrangler.toml
+            echo "自定义域名 = $CUSTOM_DOMAIN（部署时将自动添加 DNS）"
+          else
+            echo "未设置 CUSTOM_DOMAIN，部署到 *.workers.dev"
+            sed -i '/REPLACE_WITH_YOUR_CUSTOM_DOMAIN/d' wrangler.toml
+          fi
 
       - name: Apply D1 migrations
         run: npx wrangler d1 migrations apply workerbbs --remote --yes

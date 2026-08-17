@@ -31,5 +31,6 @@ database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 binding = "BUCKET"
 bucket_name = "workerbbs-assets"
 
-# 自定义域名（可选，取消注释并改成你的域名）：
-# routes = [{ pattern = "forum.example.com", custom_domain = true }]
+# 自定义域名（可选）：部署时 Cloudflare 会自动为该域名添加 DNS 记录。
+# 域名由 GitHub Secrets 的 CUSTOM_DOMAIN 注入；若未设置则保持占位符（CI 会自动注释掉本行）。
+custom_domains = [{ domain = "REPLACE_WITH_YOUR_CUSTOM_DOMAIN" }]
