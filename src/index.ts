@@ -3,14 +3,26 @@ import type { Bindings, User } from './types';
 import * as db from './db';
 import { hashPassword, verifyPassword } from './auth';
 
-type AppEnv = { Bindings: Bindings };
+type AppEnv = { Bindings: Bindings; Variables: { user: User | null } };
 const app = new Hono<AppEnv>();
 
 const SID = 'sid';
 
+/* ---------- Cookie 读写（不依赖额外中间件） ---------- */
+function getCookie(c: any, name: string): string | undefined {
+  const h = c.req.header('Cookie') || '';
+  const m = h.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)'));
+  return m ? m[1] : undefined;
+}
+function setCookie(c: any, name: string, value: string, maxAge?: number) {
+  let s = name + '=' + value + '; Path=/; HttpOnly; SameSite=Lax';
+  if (maxAge !== undefined) s += '; Max-Age=' + maxAge;
+  c.header('Set-Cookie', s);
+}
+
 /* ---------- 中间件：加载当前登录用户 ---------- */
 app.use('*', async (c, next) => {
-  const sid = c.req.cookie(SID);
+  const sid = getCookie(c, SID);
   const user = await db.getUserBySession(c.env.DB, sid);
   c.set('user', user);
   await next();
@@ -88,7 +100,7 @@ app.post('/api/auth/register', async (c) => {
   const id = await db.createUser(c.env.DB, { username, email, passHash });
   const sid = await db.createSession(c.env.DB, id, db.SESSION_TTL);
   const u = await db.getUserById(c.env.DB, id);
-  c.cookie(SID, sid, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: db.SESSION_TTL });
+  setCookie(c, SID, sid, db.SESSION_TTL);
   return ok({ user: db.toPublicUser(u!) }, 201);
 });
 
@@ -105,15 +117,15 @@ app.post('/api/auth/login', async (c) => {
   const okPwd = await verifyPassword(password, u.pass_hash);
   if (!okPwd) return fail('账号或密码错误', 401);
   const sid = await db.createSession(c.env.DB, u.id, db.SESSION_TTL);
-  c.cookie(SID, sid, { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: db.SESSION_TTL });
+  setCookie(c, SID, sid, db.SESSION_TTL);
   return ok({ user: db.toPublicUser(u) });
 });
 
 // 登出
 app.post('/api/auth/logout', async (c) => {
-  const sid = c.req.cookie(SID);
+  const sid = getCookie(c, SID);
   await db.deleteSession(c.env.DB, sid);
-  c.cookie(SID, '', { httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 0 });
+  setCookie(c, SID, '', 0);
   return ok({ ok: true });
 });
 
@@ -288,10 +300,10 @@ function requireAdmin(c: any) {
 app.get('/api/admin/stats', async (c) => {
   const e = requireAdmin(c);
   if (e) return e;
-  const users = (await c.env.DB.prepare('SELECT COUNT(*) c FROM users').first<{ c: number }>()).c;
-  const threads = (await c.env.DB.prepare('SELECT COUNT(*) c FROM threads WHERE deleted=0').first<{ c: number }>()).c;
-  const replies = (await c.env.DB.prepare('SELECT COUNT(*) c FROM replies WHERE deleted=0').first<{ c: number }>()).c;
-  const banned = (await c.env.DB.prepare('SELECT COUNT(*) c FROM users WHERE banned=1').first<{ c: number }>()).c;
+  const users = (await c.env.DB.prepare('SELECT COUNT(*) c FROM users').first<{ c: number }>())?.c ?? 0;
+  const threads = (await c.env.DB.prepare('SELECT COUNT(*) c FROM threads WHERE deleted=0').first<{ c: number }>())?.c ?? 0;
+  const replies = (await c.env.DB.prepare('SELECT COUNT(*) c FROM replies WHERE deleted=0').first<{ c: number }>())?.c ?? 0;
+  const banned = (await c.env.DB.prepare('SELECT COUNT(*) c FROM users WHERE banned=1').first<{ c: number }>())?.c ?? 0;
   return ok({ users, threads, replies, banned });
 });
 

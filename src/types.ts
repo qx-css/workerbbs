@@ -9,6 +9,7 @@ export interface User {
   id: number;
   username: string;
   email: string;
+  pass_hash: string;
   role: 'user' | 'admin';
   exp: number;
   avatar: string;

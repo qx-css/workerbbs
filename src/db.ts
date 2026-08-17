@@ -49,7 +49,7 @@ export async function setSetting(db: D1Database, key: string, value: string): Pr
 /* ============ 板块 ============ */
 
 export async function listBoards(db: D1Database): Promise<Board[]> {
-  return (await db.prepare('SELECT * FROM boards ORDER BY sort ASC, id ASC').all()).results as Board[];
+  return (await db.prepare('SELECT * FROM boards ORDER BY sort ASC, id ASC').all()).results as unknown as Board[];
 }
 
 /* ============ 用户 ============ */
@@ -90,7 +90,7 @@ export async function updateUser(db: D1Database, id: number, fields: Record<stri
 export async function listUsers(db: D1Database): Promise<User[]> {
   return (await db
     .prepare('SELECT * FROM users ORDER BY created_at DESC')
-    .all()).results as User[];
+    .all()).results as unknown as User[];
 }
 
 export async function addExp(db: D1Database, userId: number, amount: number): Promise<void> {
@@ -119,7 +119,7 @@ export async function listThreads(
   }
   sql += ' ORDER BY pinned DESC, id DESC LIMIT ? OFFSET ?';
   binds.push(pageSize, offset);
-  return (await db.prepare(sql).bind(...binds).all()).results as Thread[];
+  return (await db.prepare(sql).bind(...binds).all()).results as unknown as Thread[];
 }
 
 export async function getThread(db: D1Database, id: number): Promise<Thread | null> {
@@ -161,7 +161,7 @@ export async function listReplies(db: D1Database, threadId: number): Promise<Rep
   return (await db
     .prepare('SELECT * FROM replies WHERE thread_id = ? AND deleted = 0 ORDER BY id ASC')
     .bind(threadId)
-    .all()).results as Reply[];
+    .all()).results as unknown as Reply[];
 }
 
 export async function createReply(
