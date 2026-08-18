@@ -117,13 +117,16 @@
   }
 
   function applyTheme() {
-    document.documentElement.style.setProperty('--accent', SETTINGS.site_accent || '#0f6cbd');
-    if (SETTINGS.site_bg) bg.style.backgroundImage = 'url(' + SETTINGS.site_bg + ')';
-    else bg.style.backgroundImage = '';
-    document.title = SETTINGS.site_name || 'WorkerBBS';
     // 深色模式：持久化在 localStorage（个人偏好，与站点主题色无关）
     const theme = localStorage.getItem('theme') || 'light';
     document.documentElement.dataset.theme = theme;
+    // 站点强调色只在浅色模式下内联覆盖；深色模式让 [data-theme="dark"] 里的 --accent 生效，
+    // 否则内联样式（优先级最高）会把深色强调色顶掉，导致深色下仍是浅色蓝。
+    if (theme === 'dark') document.documentElement.style.removeProperty('--accent');
+    else document.documentElement.style.setProperty('--accent', SETTINGS.site_accent || '#0f6cbd');
+    if (SETTINGS.site_bg) bg.style.backgroundImage = 'url(' + SETTINGS.site_bg + ')';
+    else bg.style.backgroundImage = '';
+    document.title = SETTINGS.site_name || 'WorkerBBS';
   }
 
   function loginBtn() { return '<button class="btn primary" id="loginBtn">登录</button>'; }
