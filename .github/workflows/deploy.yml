@@ -21,6 +21,7 @@ jobs:
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
       WS_API_KEY: ${{ secrets.WS_API_KEY }}
+      WS_DOMAIN: ${{ vars.WS_DOMAIN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -88,6 +89,12 @@ jobs:
         run: |
           set -e
           echo "==> 部署 WebSocket 中继节点 workerbbs-ws"
+          if [ -n "$WS_DOMAIN" ]; then
+            echo "==> 注入 NODE_DOMAIN = $WS_DOMAIN 到 ws 节点"
+            sed -i "s|^NODE_DOMAIN = .*|NODE_DOMAIN = \"$WS_DOMAIN\"|" ws/wrangler.toml
+          else
+            echo "::warning::未设置 WS_DOMAIN（仓库变量），NODE_DOMAIN 使用占位值 ws.example.workers.dev（仅展示用，不影响连接）。"
+          fi
           if [ -n "$WS_API_KEY" ]; then
             echo "==> 注入 API_KEY 到 ws 节点（用于广播鉴权，须与后台「API 密钥」完全一致）"
             printf '%s' "$WS_API_KEY" | npx wrangler secret put API_KEY --config ws/wrangler.toml

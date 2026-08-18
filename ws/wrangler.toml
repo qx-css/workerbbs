@@ -6,6 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 # 变量（非密钥也可提交；API_KEY 属密钥，建议用 wrangler secret 注入）
+# NODE_DOMAIN 默认占位，CI 部署时会用仓库变量 WS_DOMAIN 覆盖（Settings → Variables 配置）。
 [vars]
 USER_ID = "default"
 NODE_DOMAIN = "ws.example.workers.dev"
@@ -22,6 +23,7 @@ NODE_DOMAIN = "ws.example.workers.dev"
 name = "RELAY"
 class_name = "Relay"
 
+# 免费套餐必须用 new_sqlite_classes 迁移创建 DO 命名空间（否则报 10097）
 [[migrations]]
 tag = "v1"
-new_classes = ["Relay"]
+new_sqlite_classes = ["Relay"]
