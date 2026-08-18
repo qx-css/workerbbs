@@ -129,7 +129,7 @@ async function sendVerificationEmail(c: any, email: string, token: string) {
 }
 
 /* ---------- 实时同步（WebSocket 中继节点） ---------- */
-// 主仓库配置 ws_endpoint（节点地址）与 ws_api_key（用于鉴权广播）。
+// 主仓库配置 ws_endpoint（节点地址）与 ws_api_key（可选；用于鉴权广播）。
 // 事件经节点的 /broadcast 接口推送给所有在线客户端。未配置则静默跳过。
 async function broadcastWS(c: any, type: string, payload: unknown): Promise<void> {
   const endpoint = await db.getSetting(c.env.DB, 'ws_endpoint');
@@ -137,9 +137,11 @@ async function broadcastWS(c: any, type: string, payload: unknown): Promise<void
   if (!endpoint) return;
   try {
     const url = endpoint.replace(/^wss?:\/\//, 'https://').replace(/\/+$/, '') + '/broadcast';
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (key) headers.Authorization = 'Bearer ' + key;
     await fetch(url, {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ type, payload }),
     });
   } catch {
@@ -481,9 +483,11 @@ app.post('/api/admin/ws-test', async (c) => {
   const ctrl: any = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (key) headers.Authorization = 'Bearer ' + key;
     const r = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ type: 'ping', payload: { ts: Date.now(), source: 'workerbbs-test' } }),
       signal: ctrl ? ctrl.signal : undefined,
     });

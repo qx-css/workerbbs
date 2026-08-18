@@ -20,7 +20,6 @@ jobs:
       ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
       ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
       CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
-      WS_API_KEY: ${{ secrets.WS_API_KEY }}
       WS_DOMAIN: ${{ vars.WS_DOMAIN }}
     steps:
       - uses: actions/checkout@v4
@@ -95,12 +94,7 @@ jobs:
           else
             echo "::warning::未设置 WS_DOMAIN（仓库变量），NODE_DOMAIN 使用占位值 ws.example.workers.dev（仅展示用，不影响连接）。"
           fi
-          if [ -n "$WS_API_KEY" ]; then
-            echo "==> 注入 API_KEY 到 ws 节点（用于广播鉴权，须与后台「API 密钥」完全一致）"
-            printf '%s' "$WS_API_KEY" | npx wrangler secret put API_KEY --config ws/wrangler.toml
-          else
-            echo "::warning::未设置 WS_API_KEY，workerbbs-ws 将以空密钥部署，主仓库广播会 401。请在 Settings → Secrets → Actions 添加 WS_API_KEY。"
-          fi
+          echo "👉 ws 节点不启用广播鉴权（无需 API_KEY），部署后任何人可经 /broadcast 推送事件。"
           npx wrangler deploy --config ws/wrangler.toml
           echo "👉 ws 节点已部署。地址（填入主站后台「实时同步」→ WebSocket 端点）："
           echo "   wss://workerbbs-ws.<你的 workers.dev 子域>.workers.dev"
