@@ -10,11 +10,17 @@
   let ME = null;
   let BOARDS = [];
 
+  const DEFAULT_BIO = '此人很懒，没有留下个人简介';
+
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const avatarHTML = (u) =>
-    u && u.avatar
-      ? '<span class="avatar clickable" data-user="' + esc(u.username) + '"><img src="' + esc(u.avatar) + '" alt=""></span>'
-      : '<span class="avatar clickable" data-user="' + esc(u ? u.username : '') + '">' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
+  // clickable=false 时不挂 data-user（例如自己的主页，头像用于双击换图，不再跳转）
+  function avatarHTML(u, clickable) {
+    const cls = 'avatar' + (clickable === false ? '' : ' clickable');
+    const attr = clickable === false ? '' : ' data-user="' + esc(u ? u.username : '') + '"';
+    return u && u.avatar
+      ? '<span class="' + cls + '"' + attr + '><img src="' + esc(u.avatar) + '" alt=""></span>'
+      : '<span class="' + cls + '"' + attr + '>' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
+  }
 
   async function api(path, opts) {
     opts = opts || {};
@@ -237,7 +243,7 @@
       + '<div class="profile-top">'
       + avatarHTML({ username: u.username, avatar: u.avatar })
       + '<div class="profile-id"><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
-      + '<div class="pm">' + esc(u.bio || '这个人很神秘') + '</div></div>'
+      + '<div class="pm">' + esc(u.bio || DEFAULT_BIO) + '</div></div>'
       + (isSelf ? '' : '<button class="btn follow-btn' + (u.is_following ? ' following' : '') + '" id="followBtn">' + (u.is_following ? '已关注' : '+ 关注') + '</button>')
       + '</div>'
       + '<div class="profile-stats">'
@@ -269,14 +275,16 @@
     const my = await api('/api/users/' + encodeURIComponent(u.username));
     const mu = my.user;
     const feed = (my.threads || []).map(threadCard).join('') || '<div class="empty">还没有发帖</div>';
-    const cover = u.bg_image ? ' style="background-image:url(' + esc(u.bg_image) + ')"' : '';
+    // 没设封面时留空 → 走 CSS 里的默认森林封面
+    const coverStyle = u.bg_image ? ' style="background-image:url(' + esc(u.bg_image) + ')"' : '';
     content.innerHTML =
-      '<div class="appbar"><h1>我的</h1></div><div class="content-inner"><div class="profile">'
-      + '<div class="profile-cover"' + cover + '>'
+      '<div class="appbar"><h1>我的</h1><span class="spacer"></span><span class="muted">双击头像 / 封面 / 简介即可修改</span></div>'
+      + '<div class="content-inner"><div class="profile">'
+      + '<div class="profile-cover" id="coverBox" title="双击更换封面"' + coverStyle + '>'
       + '<div class="cover-actions"><button class="btn" id="upBg">换封面</button></div></div>'
       + '<div class="profile-main">'
       + '<div class="profile-top">'
-      + avatarHTML({ username: u.username, avatar: u.avatar })
+      + avatarHTML({ username: u.username, avatar: u.avatar }, false)
       + '<div class="profile-id"><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
       + '<div class="pm">经验 ' + u.exp + ' · ' + esc(u.role === 'admin' ? '管理员' : '会员') + '</div></div>'
       + '<button class="btn" id="upAvatar">换头像</button>'
@@ -287,34 +295,71 @@
       + '<div class="pstat"><b>' + (mu.following || 0) + '</b><span>关注</span></div>'
       + '<div class="pstat"><b>' + (mu.likes || 0) + '</b><span>获赞</span></div>'
       + '</div>'
-      + '<div class="profile-edit"><label>个人简介</label><textarea id="bio" class="compose" style="width:100%;min-height:80px;padding:9px 11px;border:1px solid var(--rail-border);border-radius:6px;font:inherit;">' + esc(u.bio) + '</textarea>'
-      + '<div class="row" style="display:flex;gap:10px;margin-top:12px;"><button class="btn primary" id="saveProfile">保存资料</button><span class="muted" id="pMsg"></span></div></div>'
+      + '<h3 class="sec-title">个人简介 <span class="bio-hint">双击文字修改</span></h3>'
+      + '<div class="bio-block" id="bioBlock"></div>'
       + '<h3 class="sec-title">我发的帖子</h3>'
       + '<div class="feed">' + feed + '</div>'
       + '<div class="profile-actions"><button class="btn" id="logout">退出登录</button></div>'
       + '</div></div>';
 
-    document.getElementById('upAvatar').onclick = () => pickImage(256, 0.85, async (dataUrl) => {
+    /* --- 个人简介：默认只读展示，双击进入编辑 --- */
+    const bioBlock = document.getElementById('bioBlock');
+    function renderBioView() {
+      const text = (ME.bio || '').trim();
+      bioBlock.innerHTML = '<div class="bio-view' + (text ? '' : ' placeholder') + '" title="双击修改">'
+        + esc(text || DEFAULT_BIO) + '</div>';
+    }
+    function startBioEdit() {
+      bioBlock.innerHTML = '<textarea id="bioInput" maxlength="500" placeholder="' + esc(DEFAULT_BIO) + '"></textarea>'
+        + '<div class="bio-actions"><button class="btn primary" id="bioSave">保存</button>'
+        + '<button class="btn" id="bioCancel">取消</button>'
+        + '<span class="muted" id="bioMsg">Ctrl+Enter 保存 · Esc 取消</span></div>';
+      const ta = document.getElementById('bioInput');
+      ta.value = ME.bio || '';
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      const save = async () => {
+        try {
+          await api('/api/me', { method: 'PATCH', body: JSON.stringify({ bio: ta.value.trim() }) });
+          await refreshMe();
+          renderBioView();
+        } catch (e) { document.getElementById('bioMsg').textContent = e.message; }
+      };
+      document.getElementById('bioSave').onclick = save;
+      document.getElementById('bioCancel').onclick = renderBioView;
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); renderBioView(); }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+      });
+    }
+    bioBlock.addEventListener('dblclick', (e) => { if (e.target.closest('.bio-view')) startBioEdit(); });
+    renderBioView();
+
+    /* --- 头像 / 封面：按钮点一下，或直接双击 --- */
+    const changeAvatar = () => pickImage(256, 0.85, async (dataUrl) => {
       await api('/api/me', { method: 'PATCH', body: JSON.stringify({ avatar: dataUrl }) }); await refreshMe(); viewProfile();
     });
-    document.getElementById('upBg').onclick = () => pickImage(1280, 0.75, async (dataUrl) => {
+    const changeCover = () => pickImage(1280, 0.75, async (dataUrl) => {
       await api('/api/me', { method: 'PATCH', body: JSON.stringify({ bg_image: dataUrl }) }); await refreshMe(); viewProfile();
     });
-    document.getElementById('saveProfile').onclick = async () => {
-      const bio = document.getElementById('bio').value;
-      await api('/api/me', { method: 'PATCH', body: JSON.stringify({ bio }) });
-      await refreshMe();
-      document.getElementById('pMsg').textContent = '已保存';
-    };
+    document.getElementById('upAvatar').onclick = changeAvatar;
+    document.getElementById('upBg').onclick = changeCover;
+    const avEl = content.querySelector('.profile-top .avatar');
+    if (avEl) { avEl.style.cursor = 'pointer'; avEl.title = '双击更换头像'; avEl.addEventListener('dblclick', changeAvatar); }
+    document.getElementById('coverBox').addEventListener('dblclick', (e) => {
+      if (e.target.closest('.cover-actions')) return;
+      changeCover();
+    });
+
     document.getElementById('logout').onclick = async () => {
       await api('/api/auth/logout', { method: 'POST' }); ME = null; location.hash = '#/home'; router();
     };
   }
 
+  // 设置页 = 纯个人偏好。站点管理不在这里，独立在 /admin（仅管理员可进）。
   async function viewSettings() {
     if (!ME) { openAuth(); return; }
     const isAdmin = ME.role === 'admin';
-    // 所有用户都先看到「个人偏好」（深色模式等），管理员再追加站点管理面板
     content.innerHTML =
       '<div class="appbar"><h1>设置</h1></div><div class="content-inner">'
       + '<h3 class="sec-title">个人偏好</h3>'
@@ -322,7 +367,14 @@
       + '<label class="switch"><input type="checkbox" id="themeToggle"' + (localStorage.getItem('theme') === 'dark' ? ' checked' : '') + '><span class="slider"></span></label></div>'
       + '<div class="settings-row"><div><div style="font-weight:600;">账号</div><div class="muted">' + esc(ME.username) + '</div></div>'
       + '<button class="btn" id="toProfile">我的资料</button></div>'
-      + (isAdmin ? '' : '<div class="settings-row"><div>主题色由站点管理员统一设置</div><span class="tag">普通用户</span></div>')
+      + '<div class="settings-row"><div><div style="font-weight:600;">退出登录</div><div class="muted">在这台设备上退出当前账号</div></div>'
+      + '<button class="btn" id="sLogout">退出</button></div>'
+      + (isAdmin
+        ? '<h3 class="sec-title" style="margin-top:26px;">管理员</h3>'
+          + '<div class="settings-row"><div><div style="font-weight:600;">管理后台</div>'
+          + '<div class="muted">站点设置、用户与帖子管理都在 /admin（横屏页面）</div></div>'
+          + '<button class="btn primary" id="toAdmin">打开 /admin</button></div>'
+        : '')
       + '</div>';
     document.getElementById('themeToggle').onchange = (e) => {
       const t = e.target.checked ? 'dark' : 'light';
@@ -330,80 +382,11 @@
       document.documentElement.dataset.theme = t;
     };
     document.getElementById('toProfile').onclick = () => (location.hash = '#/profile');
-
-    if (isAdmin) {
-      const stats = await api('/api/admin/stats');
-      content.querySelector('.content-inner').insertAdjacentHTML('beforeend',
-        '<h3 class="sec-title" style="margin-top:28px;">站点管理</h3>'
-        + '<div class="stats">'
-        + '<div class="stat"><b>' + stats.users + '</b><span>用户</span></div>'
-        + '<div class="stat"><b>' + stats.threads + '</b><span>帖子</span></div>'
-        + '<div class="stat"><b>' + stats.replies + '</b><span>回复</span></div>'
-        + '<div class="stat"><b>' + stats.banned + '</b><span>已封禁</span></div></div>'
-        + '<h3 class="sec-title" style="margin-top:24px;">站点设置</h3>'
-        + '<div class="settings-row"><div><label>站点名称</label><input id="sName" value="' + esc(SETTINGS.site_name) + '"></div></div>'
-        + '<div class="settings-row"><div><label>站点简介</label><input id="sDesc" value="' + esc(SETTINGS.site_desc) + '"></div></div>'
-        + '<div class="settings-row"><div><label>强调色 (hex)</label><input id="sAccent" value="' + esc(SETTINGS.site_accent) + '"></div>'
-        + '<div class="swatches" id="sw">' + ['#0f6cbd', '#6161e6', '#0e700e', '#b8135b', '#c23500', '#5a2da4'].map((c) => '<span class="swatch" data-c="' + c + '" style="background:' + c + '"></span>').join('') + '</div></div>'
-        + '<div class="settings-row"><div><label>背景图 (上传)</label><button class="btn" id="sBg">上传背景图</button></div>'
-        + '<button class="btn primary" id="saveSite">保存站点设置</button></div>'
-        + '<h3 class="sec-title" style="margin-top:24px;">用户管理</h3><div id="userAdmin"></div>'
-        + '<h3 class="sec-title" style="margin-top:24px;">帖子管理</h3><div id="threadAdmin"></div>'
-      );
-      document.querySelectorAll('#sw .swatch').forEach((s) => s.onclick = () => (document.getElementById('sAccent').value = s.dataset.c));
-      document.getElementById('sBg').onclick = () => pickImage(1920, 0.75, async (dataUrl) => { document.getElementById('sBg').dataset.data = dataUrl; document.getElementById('sBg').textContent = '已选背景，保存生效'; });
-      document.getElementById('saveSite').onclick = async () => {
-        const payload = { site_name: document.getElementById('sName').value, site_desc: document.getElementById('sDesc').value, site_accent: document.getElementById('sAccent').value };
-        const bgData = document.getElementById('sBg').dataset.data;
-        if (bgData) payload.site_bg = bgData;
-        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
-        SETTINGS = await api('/api/settings'); applyTheme();
-        alert('站点设置已保存');
-      };
-      renderUserAdmin();
-      renderThreadAdmin();
-    }
-  }
-
-  async function renderUserAdmin() {
-    const data = await api('/api/admin/users');
-    document.getElementById('userAdmin').innerHTML =
-      '<table class="admin"><thead><tr><th>用户</th><th>等级</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody>'
-      + data.users.map((u) =>
-        '<tr><td>' + esc(u.username) + '</td><td>Lv.' + u.level + '</td>'
-        + '<td><span class="tag ' + (u.role === 'admin' ? 'admin' : '') + '">' + esc(u.role) + '</span></td>'
-        + '<td>' + (u.banned ? '<span class="tag banned">已封禁</span>' : '<span class="tag">正常</span>') + '</td>'
-        + '<td><button class="btn" data-ban="' + u.id + '">' + (u.banned ? '解封' : '封禁') + '</button> '
-        + '<button class="btn" data-role="' + u.id + '">' + (u.role === 'admin' ? '降为会员' : '设为管理员') + '</button></td></tr>'
-      ).join('') + '</tbody></table>';
-    document.querySelectorAll('[data-ban]').forEach((b) => b.onclick = async () => {
-      const id = b.dataset.ban; const u = data.users.find((x) => x.id == id);
-      await api('/api/admin/users/' + id, { method: 'PATCH', body: JSON.stringify({ banned: u.banned ? 0 : 1 }) }); renderUserAdmin();
-    });
-    document.querySelectorAll('[data-role]').forEach((b) => b.onclick = async () => {
-      const id = b.dataset.role; const u = data.users.find((x) => x.id == id);
-      await api('/api/admin/users/' + id, { method: 'PATCH', body: JSON.stringify({ role: u.role === 'admin' ? 'user' : 'admin' }) }); renderUserAdmin();
-    });
-  }
-
-  async function renderThreadAdmin() {
-    const data = await api('/api/admin/threads');
-    document.getElementById('threadAdmin').innerHTML =
-      '<table class="admin"><thead><tr><th>标题</th><th>板块</th><th>置顶</th><th>操作</th></tr></thead><tbody>'
-      + data.threads.map((t) =>
-        '<tr><td>' + esc(t.title.slice(0, 40)) + '</td><td>' + t.board_id + '</td>'
-        + '<td>' + (t.pinned ? '是' : '否') + '</td>'
-        + '<td><button class="btn" data-pin="' + t.id + '">' + (t.pinned ? '取消置顶' : '置顶') + '</button> '
-        + '<button class="btn danger" data-del="' + t.id + '">删除</button></td></tr>'
-      ).join('') + '</tbody></table>';
-    document.querySelectorAll('[data-pin]').forEach((b) => b.onclick = async () => {
-      const id = b.dataset.pin; const t = data.threads.find((x) => x.id == id);
-      await api('/api/admin/threads/' + id, { method: 'PATCH', body: JSON.stringify({ pinned: t.pinned ? 0 : 1 }) }); renderThreadAdmin();
-    });
-    document.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
-      if (!confirm('确认删除该帖子？')) return;
-      await api('/api/admin/threads/' + b.dataset.del, { method: 'PATCH', body: JSON.stringify({ deleted: 1 }) }); renderThreadAdmin();
-    });
+    document.getElementById('sLogout').onclick = async () => {
+      await api('/api/auth/logout', { method: 'POST' }); ME = null; location.hash = '#/home'; router();
+    };
+    const ta = document.getElementById('toAdmin');
+    if (ta) ta.onclick = () => (location.href = '/admin');
   }
 
   /* ===== 图片上传（转 base64 直接存 D1，无需 R2） ===== */

@@ -395,6 +395,23 @@ app.patch('/api/admin/threads/:id', async (c) => {
 });
 
 /* ============================================================
+ *  管理后台页面 /admin（独立横屏页面，仅管理员可访问）
+ *  前台的 #/settings 只放个人偏好，不再内嵌任何站点管理。
+ * ============================================================ */
+async function serveAdminShell(c: any) {
+  if (!isAdmin(c)) {
+    // 未登录或普通会员：直接跳回首页，不返回后台页面
+    return new Response(null, { status: 302, headers: { Location: '/' } });
+  }
+  const url = new URL(c.req.url);
+  url.pathname = '/admin.html';
+  return c.env.ASSETS.fetch(new Request(url.toString(), { method: 'GET', headers: c.req.raw.headers }));
+}
+app.get('/admin', serveAdminShell);
+app.get('/admin/', serveAdminShell);
+app.get('/admin.html', serveAdminShell); // 直接敲文件名也要过鉴权
+
+/* ============================================================
  *  SPA 静态资源（非 /api 请求回退到 index.html）
  * ============================================================ */
 app.all('*', async (c) => {

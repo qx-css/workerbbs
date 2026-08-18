@@ -153,33 +153,24 @@
   .modal .row .btn { flex: 1; }
   .err { color: #c42b1c; font-size: 12px; margin-top: 10px; min-height: 14px; }
 
-  /* 设置 / 后台 */
+  /* 设置（仅个人偏好；站点管理已独立到 /admin） */
   .settings-row { display: flex; align-items: center; justify-content: space-between; padding: 15px 0; border-bottom: 1px solid var(--border); gap: 12px; }
   .settings-row label { font-size: 12px; color:var(--text-2); display:block; margin-bottom: 4px; }
   .settings-row input { font: inherit; font-size: 13px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; width: 260px; max-width: 50vw; background: var(--surface); color: var(--text); }
-  .swatches { display: flex; gap: 8px; }
-  .swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
-  .swatch.active { border-color: #1b1b1b; }
-  .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-top: 16px; }
-  .stat { background:var(--surface); border:1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
-  .stat b { display:block; font-size: 22px; }
-  .stat span { font-size: 12px; color:var(--text-2); }
-  table.admin { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
-  table.admin th, table.admin td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
-  table.admin th { color:var(--text-2); font-weight: 600; }
   .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--hover); color:var(--text-2); }
-  .tag.admin { background: rgba(15,108,189,0.12); color: var(--accent); }
-  .tag.banned { background: #fde7e4; color: #c42b1c; }
+  .tag.admin { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 
   /* ===== 社区风格个人主页 ===== */
   .profile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 16px;
     animation: card-in var(--dur-normal) var(--ease-enter) both; }
-  .profile-cover { height: 140px; background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #000)); background-size: cover; background-position: center; position: relative; }
-  .profile-cover .cover-actions { position: absolute; right: 12px; bottom: 12px; }
-  .profile-main { padding: 0 20px 22px; }
-  .profile-top { display: flex; align-items: flex-end; gap: 14px; margin-top: -32px; }
-  .profile-top .avatar { width: 72px; height: 72px; font-size: 28px; border: 3px solid var(--surface); box-shadow: 0 1px 6px rgba(0,0,0,0.18); flex: none; }
-  .profile-id { flex: 1; min-width: 0; padding-top: 38px; }
+  /* 默认封面：森林插画（可被用户上传的封面覆盖）。不使用渐变色。 */
+  .profile-cover { height: 156px; background: #cfe0d2 url('/cover-forest.svg') center/cover no-repeat; position: relative; z-index: 0; }
+  .profile-cover .cover-actions { position: absolute; right: 12px; bottom: 12px; z-index: 2; }
+  .profile-main { padding: 0 20px 22px; position: relative; z-index: 1; }
+  /* 关键：封面是定位元素，会盖住未定位的头像，这里显式抬高头像所在行的层级 */
+  .profile-top { display: flex; align-items: flex-end; gap: 14px; margin-top: -36px; position: relative; z-index: 3; }
+  .profile-top .avatar { width: 76px; height: 76px; font-size: 30px; border: 3px solid var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,0.22); flex: none; position: relative; z-index: 4; }
+  .profile-id { flex: 1; min-width: 0; padding-top: 40px; }
   .profile-id .pn { font-weight: 700; font-size: 19px; display: flex; align-items: center; gap: 8px; }
   .profile-id .pm { color: var(--text-2); font-size: 13px; margin-top: 4px; word-break: break-word; }
   .profile-top > .btn { margin-top: 40px; }
@@ -191,6 +182,18 @@
   .pstat span { font-size: 12px; color: var(--text-2); }
   .sec-title { font-size: 14px; font-weight: 600; color: var(--text-2); margin: 24px 4px 4px; }
   .profile-edit { margin-top: 16px; }
+  /* 个人简介：默认只展示，双击才进入编辑 */
+  .bio-block { margin-top: 8px; }
+  .bio-view { font-size: 13.5px; line-height: 1.7; color: var(--text); white-space: pre-wrap; word-break: break-word;
+    padding: 10px 12px; border: 1px dashed transparent; border-radius: 8px; cursor: text;
+    transition: border-color var(--dur-fast) var(--ease-std), background var(--dur-fast) var(--ease-std); }
+  .bio-view:hover { border-color: var(--border); background: var(--surface-2); }
+  .bio-view.placeholder { color: var(--text-2); }
+  .bio-hint { font-size: 11.5px; color: var(--text-2); margin-left: 12px; }
+  .bio-block textarea { width: 100%; font: inherit; font-size: 13.5px; line-height: 1.7; padding: 10px 12px; min-height: 92px;
+    border: 1px solid var(--accent); border-radius: 8px; background: var(--surface); color: var(--text); resize: vertical; }
+  .bio-block textarea:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
+  .bio-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .profile-actions { margin-top: 18px; display: flex; gap: 8px; }
   .follow-btn { background: var(--accent); border-color: var(--accent); color: #fff; }
   .follow-btn:hover { filter: brightness(1.05); }
@@ -230,7 +233,8 @@
     --accent: #4aa3ff;
   }
   [data-theme="dark"] .post-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.5); }
-  [data-theme="dark"] .profile-cover { background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 40%, #000)); }
+  /* 深色下把封面压暗（用叠加层，不改图，也不引入渐变色块） */
+  [data-theme="dark"] .profile-cover::before { content: ""; position: absolute; inset: 0; background: rgba(8,14,10,0.42); z-index: 1; }
   [data-theme="dark"] .nav-toggle::after, [data-theme="dark"] .nav-item::after { background: #f3f3f3; color: #161616; }
 
   @media (prefers-reduced-motion: reduce) {

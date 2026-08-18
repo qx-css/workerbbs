@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>管理后台</title>
+<style>
+  :root {
+    --accent: #0f6cbd;
+    --text: #1b1b1b;
+    --text-2: #767676;
+    --bg: #f4f5f4;
+    --surface: #ffffff;
+    --surface-2: #f6f6f6;
+    --border: #e6e6e6;
+    --hover: #efefef;
+    --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", sans-serif;
+    --ease-std: cubic-bezier(0.8,0,0.2,1);
+    --dur-fast: 167ms;
+  }
+  [data-theme="dark"] {
+    --text: #f3f3f3; --text-2: #9aa0a6; --bg: #121212; --surface: #1e1e1e; --surface-2: #262626;
+    --border: #2c2c2c; --hover: #2a2a2a; --accent: #4aa3ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font-family: var(--font); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+
+  /* ===== 横屏后台骨架：左侧固定栏 + 右侧宽内容 ===== */
+  .shell { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  .side { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 14px 12px; gap: 4px; position: sticky; top: 0; height: 100vh; }
+  .brand { display: flex; align-items: center; gap: 9px; padding: 6px 8px 14px; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
+  .brand b { font-size: 14px; }
+  .brand span { font-size: 11px; color: var(--text-2); display: block; }
+  .snav { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 7px; font-size: 13px; cursor: pointer;
+    border: none; background: transparent; color: var(--text); font-family: inherit; text-align: left; width: 100%;
+    transition: background var(--dur-fast) var(--ease-std); }
+  .snav:hover { background: var(--hover); }
+  .snav.active { background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); font-weight: 600; }
+  .side .spacer { flex: 1; }
+  .side .foot { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+
+  .main { min-width: 0; display: flex; flex-direction: column; }
+  .top { height: 56px; display: flex; align-items: center; gap: 14px; padding: 0 24px; background: var(--surface);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  .top h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .top .spacer { flex: 1; }
+  .who { font-size: 12px; color: var(--text-2); }
+  .wrap { padding: 22px 24px 48px; }
+
+  .btn { font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: 7px 14px; border-radius: 6px; cursor: pointer; transition: background var(--dur-fast) var(--ease-std); }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { background: #c42b1c; border-color: #c42b1c; color: #fff; }
+
+  .panel { display: none; }
+  .panel.show { display: block; animation: in 200ms cubic-bezier(0,0,0,1) both; }
+  @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* 横屏铺满：统计 4~6 列，表单两列并排 */
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .stat b { display: block; font-size: 30px; line-height: 1.1; }
+  .stat span { font-size: 12px; color: var(--text-2); }
+  .cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .card h2 { font-size: 14px; margin: 0 0 14px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 5px; }
+  .field input { width: 100%; font: inherit; font-size: 13px; padding: 8px 11px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--surface); color: var(--text); }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  .swatches { display: flex; gap: 8px; margin-top: 8px; }
+  .swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .muted { color: var(--text-2); font-size: 12px; }
+
+  table.admin { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.admin th, table.admin td { text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--border); }
+  table.admin th { color: var(--text-2); font-weight: 600; font-size: 12px; background: var(--surface-2); }
+  table.admin tr:hover td { background: var(--surface-2); }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--hover); color: var(--text-2); }
+  .tag.admin { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .tag.banned { background: color-mix(in srgb, #c42b1c 14%, transparent); color: #c42b1c; }
+  .cover-preview { width: 180px; height: 64px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-2) center/cover no-repeat; }
+
+  .switch { position: relative; display: inline-block; width: 42px; height: 23px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider { position: absolute; inset: 0; background: #ccc; border-radius: 999px; cursor: pointer; transition: background var(--dur-fast); }
+  .switch .slider::before { content: ""; position: absolute; height: 17px; width: 17px; left: 3px; top: 3px; background: #fff;
+    border-radius: 50%; transition: transform var(--dur-fast); }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(19px); }
+
+  /* 后台是横屏页面：竖屏窄屏时提示旋转 */
+  #rotate { display: none; }
+  @media (orientation: portrait) and (max-width: 900px) {
+    .shell { display: none; }
+    #rotate { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      min-height: 100vh; padding: 40px 28px; text-align: center; }
+    #rotate .ico { font-size: 44px; }
+    #rotate h2 { margin: 0; font-size: 17px; }
+  }
+  @media (max-width: 1080px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } .cols { grid-template-columns: minmax(0,1fr); } }
+</style>
+</head>
+<body>
+  <div id="rotate">
+    <div class="ico">⟳</div>
+    <h2>管理后台需要横屏使用</h2>
+    <p class="muted">请把设备旋转成横屏，或换用更宽的窗口。</p>
+    <a class="btn" href="/">返回论坛</a>
+  </div>
+
+  <div class="shell">
+    <aside class="side">
+      <div class="brand"><span class="dot"></span><div><b id="brandName">管理后台</b><span>Admin Console</span></div></div>
+      <button class="snav active" data-panel="overview">概览</button>
+      <button class="snav" data-panel="site">站点设置</button>
+      <button class="snav" data-panel="users">用户管理</button>
+      <button class="snav" data-panel="threads">帖子管理</button>
+      <span class="spacer"></span>
+      <div class="foot">
+        <div class="row" style="justify-content:space-between;padding:0 4px;">
+          <span class="muted">深色模式</span>
+          <label class="switch"><input type="checkbox" id="themeToggle"><span class="slider"></span></label>
+        </div>
+        <a class="btn" href="/" style="text-align:center;text-decoration:none;">← 返回论坛</a>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="top">
+        <h1 id="panelTitle">概览</h1>
+        <span class="spacer"></span>
+        <span class="who" id="who"></span>
+      </div>
+      <div class="wrap">
+        <section class="panel show" id="p-overview">
+          <div class="stats" id="stats"></div>
+        </section>
+
+        <section class="panel" id="p-site">
+          <div class="cols">
+            <div class="card">
+              <h2>基本信息</h2>
+              <div class="field"><label>站点名称</label><input id="sName"></div>
+              <div class="field"><label>站点简介</label><input id="sDesc"></div>
+              <div class="field"><label>强调色 (hex)</label><input id="sAccent">
+                <div class="swatches" id="sw"></div>
+              </div>
+              <div class="row"><button class="btn primary" id="saveSite">保存站点设置</button><span class="muted" id="siteMsg"></span></div>
+            </div>
+            <div class="card">
+              <h2>站点背景图</h2>
+              <div class="row" style="align-items:flex-start;gap:16px;">
+                <div class="cover-preview" id="bgPreview"></div>
+                <div>
+                  <button class="btn" id="sBg">选择图片</button>
+                  <p class="muted" style="margin:8px 0 0;">图片会压缩后存进 D1，建议不超过 1MB。选好后点左侧「保存站点设置」生效。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="p-users">
+          <div class="card"><h2>全部用户</h2><div id="userAdmin"></div></div>
+        </section>
+
+        <section class="panel" id="p-threads">
+          <div class="card"><h2>全部帖子</h2><div id="threadAdmin"></div></div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <script src="/admin.js"></script>
+</body>
+</html>
