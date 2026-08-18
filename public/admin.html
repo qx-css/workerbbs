@@ -124,6 +124,8 @@
       <button class="snav" data-panel="site">站点设置</button>
       <button class="snav" data-panel="users">用户管理</button>
       <button class="snav" data-panel="threads">帖子管理</button>
+      <button class="snav" data-panel="mail">邮件设置</button>
+      <button class="snav" data-panel="realtime">实时同步</button>
       <span class="spacer"></span>
       <div class="foot">
         <div class="row" style="justify-content:space-between;padding:0 4px;">
@@ -154,6 +156,15 @@
               <div class="field"><label>强调色 (hex)</label><input id="sAccent">
                 <div class="swatches" id="sw"></div>
               </div>
+              <div class="field"><label>站点 LOGO</label>
+                <div class="row" style="align-items:flex-start;gap:14px;">
+                  <div class="cover-preview" id="logoPreview"></div>
+                  <div>
+                    <button class="btn" id="sLogo">选择图片</button>
+                    <p class="muted" style="margin:8px 0 0;">会压缩后存进 D1，建议不超过 1MB。应用于登录页与顶栏。</p>
+                  </div>
+                </div>
+              </div>
               <div class="row"><button class="btn primary" id="saveSite">保存站点设置</button><span class="muted" id="siteMsg"></span></div>
             </div>
             <div class="card">
@@ -175,6 +186,50 @@
 
         <section class="panel" id="p-threads">
           <div class="card"><h2>全部帖子</h2><div id="threadAdmin"></div></div>
+        </section>
+
+        <section class="panel" id="p-mail">
+          <div class="cols">
+            <div class="card">
+              <h2>发信配置（Resend）</h2>
+              <div class="field"><label>API 密钥</label><input id="mKey" type="password" placeholder="re_xxxxxxxx"></div>
+              <div class="row" style="margin-bottom:14px;">
+                <button class="btn" id="mListDomains">查看所有可用域</button>
+                <span class="muted" id="mDomainMsg"></span>
+              </div>
+              <div class="field"><label>发信域名</label>
+                <select id="mDomain" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                  <option value="">— 先点「查看所有可用域」—</option>
+                </select>
+              </div>
+              <div class="field"><label>域名前缀</label><input id="mPrefix" placeholder="no-reply"></div>
+              <p class="muted">发件人将显示为：<b id="mFromPreview">前缀@域名</b></p>
+              <div class="field"><label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
+                <label class="switch"><input type="checkbox" id="mVerify"><span class="slider"></span></label>
+                启用注册邮箱验证（开启后新用户注册需验证邮箱才能登录）
+              </label></div>
+              <div class="row"><button class="btn primary" id="saveMail">保存邮件设置</button><span class="muted" id="mailMsg"></span></div>
+            </div>
+            <div class="card">
+              <h2>说明</h2>
+              <p class="muted" style="line-height:1.7;">1. 在 <a href="https://resend.com" target="_blank" rel="noopener" style="color:var(--accent);">resend.com</a> 注册并创建 API 密钥。<br>
+              2. 填写密钥后点「查看所有可用域」，系统会列出你在 Resend 已验证的域名。<br>
+              3. 选择一个域名并填写前缀（如 <b>no-reply</b>），发件人即为 <b>no-reply@你的域名</b>。<br>
+              4. 勾选「启用注册邮箱验证」后，新用户注册会收到验证邮件，点击邮件里的链接才能完成验证并登录。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="p-realtime">
+          <div class="cols">
+            <div class="card">
+              <h2>实时同步（WebSocket 节点）</h2>
+              <div class="field"><label>WebSocket 端点</label><input id="rtEndpoint" placeholder="wss://ws.example.workers.dev"></div>
+              <div class="field"><label>API 密钥（用于广播鉴权）</label><input id="rtKey" type="password" placeholder="与节点 API_KEY 一致"></div>
+              <p class="muted" style="line-height:1.7;">节点需作为独立 Worker 单独部署（见仓库 <b>ws/</b> 目录）。部署后把节点地址填到「WebSocket 端点」，并把节点里设置的 <b>API_KEY</b> 填到此处，发帖 / 回复 / 点赞 / 关注等事件就会实时推送给在线用户。</p>
+              <div class="row"><button class="btn primary" id="saveRealtime">保存</button><span class="muted" id="rtMsg"></span></div>
+            </div>
+          </div>
         </section>
       </div>
     </div>

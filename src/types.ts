@@ -15,6 +15,8 @@ export interface User {
   bio: string;
   bg_image: string;
   banned: number;
+  verified: number;
+  verify_token: string;
   created_at: number;
 }
 

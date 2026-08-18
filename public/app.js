@@ -127,6 +127,29 @@
     if (SETTINGS.site_bg) bg.style.backgroundImage = 'url(' + SETTINGS.site_bg + ')';
     else bg.style.backgroundImage = '';
     document.title = SETTINGS.site_name || 'WorkerBBS';
+    renderBrand();
+  }
+
+  // 顶栏品牌（LOGO + 站名）
+  function renderBrand() {
+    const logo = document.getElementById('siteLogo');
+    const name = document.getElementById('siteName');
+    if (logo) {
+      if (SETTINGS.site_logo) { logo.src = SETTINGS.site_logo; logo.hidden = false; }
+      else logo.hidden = true;
+    }
+    if (name) name.textContent = SETTINGS.site_name || 'WorkerBBS';
+  }
+
+  /* ===== 实时通知 toast ===== */
+  let toastWrap = null;
+  function toast(html) {
+    if (!toastWrap) { toastWrap = document.createElement('div'); toastWrap.className = 'toast-wrap'; document.body.appendChild(toastWrap); }
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.innerHTML = html;
+    toastWrap.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; setTimeout(() => el.remove(), 300); }, 4200);
   }
 
   function loginBtn() { return '<button class="btn primary" id="loginBtn">登录</button>'; }
@@ -447,7 +470,7 @@
     });
 
     document.getElementById('logout').onclick = async () => {
-      await api('/api/auth/logout', { method: 'POST' }); ME = null; location.hash = '#/home'; router();
+      await api('/api/auth/logout', { method: 'POST' }); ME = null; if (wsSock) wsSock.close(); location.hash = '#/home'; router();
     };
   }
 
@@ -478,7 +501,7 @@
     };
     document.getElementById('toProfile').onclick = () => (location.hash = '#/profile');
     document.getElementById('sLogout').onclick = async () => {
-      await api('/api/auth/logout', { method: 'POST' }); ME = null; location.hash = '#/home'; router();
+      await api('/api/auth/logout', { method: 'POST' }); ME = null; if (wsSock) wsSock.close(); location.hash = '#/home'; router();
     };
     const ta = document.getElementById('toAdmin');
     if (ta) ta.onclick = () => (location.href = '/admin');
@@ -554,6 +577,7 @@
   function openAuth() {
     modalRoot.innerHTML =
       '<div class="modal-mask" id="mask"><div class="modal">'
+      + (SETTINGS.site_logo ? '<img class="brand-logo" src="' + esc(SETTINGS.site_logo) + '" alt="LOGO">' : '')
       + '<h2>欢迎来到 ' + esc(SETTINGS.site_name || 'WorkerBBS') + '</h2>'
       + '<div class="tabs"><button id="tabLogin" class="active">登录</button><button id="tabReg">注册</button></div>'
       + '<div id="authForm"></div><div class="err" id="authErr"></div></div></div>';
@@ -572,17 +596,22 @@
       const err = document.getElementById('authErr'); err.textContent = '';
       try {
         if (mode === 'register') {
-          await api('/api/auth/register', { method: 'POST', body: JSON.stringify({
+          const r = await api('/api/auth/register', { method: 'POST', body: JSON.stringify({
             username: document.getElementById('fUser').value.trim(),
             email: document.getElementById('fEmail').value.trim(),
             password: document.getElementById('fPwd').value }) });
+          if (r.needsVerification) {
+            closeAuth();
+            alert('注册成功！验证邮件已发送至 ' + r.email + '，请查收并完成邮箱验证后再登录。');
+            return;
+          }
         } else {
           await api('/api/auth/login', { method: 'POST', body: JSON.stringify({
             identifier: document.getElementById('fId').value.trim(),
             password: document.getElementById('fPwd').value }) });
         }
         await refreshMe();
-        closeAuth(); router();
+        closeAuth(); router(); connectRealtime();
       } catch (e) { err.textContent = e.message; }
     };
     renderForm();
@@ -592,6 +621,39 @@
   }
   function closeAuth() { modalRoot.innerHTML = ''; }
 
+  /* ===== 实时同步（WebSocket 中继节点） ===== */
+  let wsSock = null, wsRetry = 0;
+  function connectRealtime() {
+    if (!SETTINGS.ws_endpoint || !ME) return;
+    if (wsSock && (wsSock.readyState === WebSocket.CONNECTING || wsSock.readyState === WebSocket.OPEN)) return;
+    try {
+      const s = new WebSocket(SETTINGS.ws_endpoint);
+      wsSock = s;
+      s.onopen = () => { wsRetry = 0; };
+      s.onmessage = (ev) => {
+        let m; try { m = JSON.parse(ev.data); } catch { return; }
+        handleRealtime(m);
+      };
+      s.onclose = () => { wsSock = null; if (ME) setTimeout(connectRealtime, Math.min(8000, 1000 * (++wsRetry))); };
+      s.onerror = () => { try { s.close(); } catch {} };
+    } catch { wsSock = null; }
+  }
+  function handleRealtime(m) {
+    const p = m.payload || {};
+    if (m.type === 'thread:new') {
+      toast('<b>新帖子</b> · ' + esc(p.title || ''));
+      if ((location.hash || '').startsWith('#/home')) setTimeout(() => { try { viewHome(); } catch {} }, 700);
+    } else if (m.type === 'reply:new') {
+      toast('<b>新回复</b> · ' + esc(p.author || '') + ' 回复了帖子');
+    } else if (m.type === 'like:new') {
+      if (p.threadId && (location.hash || '') === '#/thread/' + p.threadId) {
+        const lc = document.getElementById('likeCount'); if (lc) lc.textContent = p.likes;
+      }
+    } else if (m.type === 'follow:new') {
+      toast('<b>' + esc(p.follower || '') + '</b> ' + (p.is_following ? '关注了你' : '取消了关注'));
+    }
+  }
+
   /* ===== 路由 ===== */
   const routes = { '#/home': viewHome, '#/discover': viewDiscover, '#/compose': viewCompose, '#/profile': viewProfile, '#/settings': viewSettings };
   async function router() {
@@ -599,8 +661,26 @@
     setActive(hash.split('/').slice(0, 2).join('/'));
     if (hash.startsWith('#/thread/')) return viewThread(hash.split('/')[2]);
     if (hash.startsWith('#/user/')) return viewUser(hash.split('/')[2]);
+    if (hash.startsWith('#/verify/')) return viewVerify(hash.split('/')[2]);
     const fn = routes[hash] || viewHome;
     try { await fn(); } catch (e) { content.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
+  }
+
+  // 邮箱验证结果页
+  async function viewVerify(token) {
+    let okv = false, msg = '';
+    try {
+      const r = await api('/api/auth/verify', { method: 'POST', body: JSON.stringify({ token }) });
+      okv = r.ok; msg = '邮箱验证成功，现在可以登录了。';
+    } catch (e) { msg = e.message || '验证失败'; }
+    content.innerHTML =
+      '<div class="content-inner" style="padding-top:40px;text-align:center;">'
+      + '<div style="font-size:40px;margin-bottom:10px;">' + (okv ? WI('check', 40) : WI('more', 40)) + '</div>'
+      + '<h2 style="margin:0 0 8px;">' + (okv ? '验证成功' : '验证失败') + '</h2>'
+      + '<p class="muted">' + esc(msg) + '</p>'
+      + '<div style="margin-top:18px;"><button class="btn primary" id="goLogin">去登录</button></div>'
+      + '</div>';
+    document.getElementById('goLogin').onclick = () => { location.hash = '#/home'; openAuth(); };
   }
   window.addEventListener('hashchange', router);
 
@@ -611,6 +691,7 @@
     applyTheme();
     try { BOARDS = (await api('/api/boards')).boards; } catch (e) {}
     try { const d = await api('/api/me'); ME = d.user; } catch (e) { ME = null; }
+    if (ME) connectRealtime();
     router();
   })();
 })();

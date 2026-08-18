@@ -82,8 +82,67 @@ app.get('/api/settings', async (c) => {
     site_accent: s.site_accent || '#0f6cbd',
     site_bg: s.site_bg || '',
     site_desc: s.site_desc || '',
+    site_logo: s.site_logo || '',
+    email_verify_enabled: s.email_verify_enabled === '1',
+    ws_endpoint: s.ws_endpoint || '',
+    resend_domain: s.resend_domain || '',
+    resend_from: s.resend_from || '',
   });
 });
+
+/* ---------- Resend 发信 ---------- */
+// 通过 resend.com 发送邮件。api key / from 都存于 settings 表（不进代码库）。
+async function resendSend(c: any, to: string, subject: string, html: string): Promise<boolean> {
+  const key = await db.getSetting(c.env.DB, 'resend_api_key');
+  const from = await db.getSetting(c.env.DB, 'resend_from');
+  if (!key || !from) return false;
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to, subject, html }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+function verifyLink(c: any, token: string): string {
+  return new URL(c.req.url).origin + '/#/verify/' + token;
+}
+
+async function sendVerificationEmail(c: any, email: string, token: string) {
+  const link = verifyLink(c, token);
+  const site = (await db.getSettings(c.env.DB)).site_name || 'WorkerBBS';
+  const html =
+    '<div style="font-family:Segoe UI,system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px;">'
+    + '<h2 style="margin:0 0 12px;">验证你的 ' + site + ' 邮箱</h2>'
+    + '<p style="color:#444;line-height:1.6;">感谢注册！请点击下面的按钮完成邮箱验证，验证后即可正常登录。</p>'
+    + '<p style="margin:20px 0;"><a href="' + link + '" style="background:#0f6cbd;color:#fff;text-decoration:none;padding:11px 22px;border-radius:6px;display:inline-block;font-weight:600;">验证邮箱</a></p>'
+    + '<p style="color:#888;font-size:13px;">如果按钮无法点击，请复制以下链接到浏览器打开：<br>' + link + '</p>'
+    + '</div>';
+  return resendSend(c, email, '验证你的 ' + site + ' 邮箱', html);
+}
+
+/* ---------- 实时同步（WebSocket 中继节点） ---------- */
+// 主仓库配置 ws_endpoint（节点地址）与 ws_api_key（用于鉴权广播）。
+// 事件经节点的 /broadcast 接口推送给所有在线客户端。未配置则静默跳过。
+async function broadcastWS(c: any, type: string, payload: unknown): Promise<void> {
+  const endpoint = await db.getSetting(c.env.DB, 'ws_endpoint');
+  const key = await db.getSetting(c.env.DB, 'ws_api_key');
+  if (!endpoint) return;
+  try {
+    const url = endpoint.replace(/^wss?:\/\//, 'https://').replace(/\/+$/, '') + '/broadcast';
+    await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, payload }),
+    });
+  } catch {
+    /* 实时同步失败不影响主流程 */
+  }
+}
 
 // 当前用户
 app.get('/api/me', async (c) => {
@@ -109,6 +168,19 @@ app.post('/api/auth/register', async (c) => {
 
   const passHash = await hashPassword(password);
   const id = await db.createUser(c.env.DB, { username, email, passHash });
+
+  const verifyEnabled = (await db.getSetting(c.env.DB, 'email_verify_enabled')) === '1';
+  const resendReady = !!(await db.getSetting(c.env.DB, 'resend_api_key')) && !!(await db.getSetting(c.env.DB, 'resend_from'));
+  if (verifyEnabled && resendReady) {
+    // 启用邮箱验证：创建未验证账号，发验证邮件，不自动登录
+    const token = crypto.randomUUID();
+    await db.updateUser(c.env.DB, id, { verified: 0, verify_token: token });
+    await sendVerificationEmail(c, email, token);
+    return ok({ needsVerification: true, email }, 201);
+  }
+
+  // 未启用验证：直接登录
+  await db.updateUser(c.env.DB, id, { verified: 1, verify_token: '' });
   const sid = await db.createSession(c.env.DB, id, db.SESSION_TTL);
   const u = await db.getUserById(c.env.DB, id);
   const res = ok({ user: db.toPublicUser(u!) }, 201);
@@ -126,6 +198,8 @@ app.post('/api/auth/login', async (c) => {
     : await db.getUserByUsername(c.env.DB, identifier);
   if (!u) return fail('账号或密码错误', 401);
   if (u.banned) return fail('该账号已被封禁', 403);
+  const verifyEnabled = (await db.getSetting(c.env.DB, 'email_verify_enabled')) === '1';
+  if (verifyEnabled && u.verified === 0) return fail('请先验证邮箱后再登录（验证邮件已发送）', 403);
   const okPwd = await verifyPassword(password, u.pass_hash);
   if (!okPwd) return fail('账号或密码错误', 401);
   const sid = await db.createSession(c.env.DB, u.id, db.SESSION_TTL);
@@ -141,6 +215,27 @@ app.post('/api/auth/logout', async (c) => {
   const res = ok({ ok: true });
   res.headers.set('Set-Cookie', cookieHeader(SID, '', 0));
   return res;
+});
+
+// 邮箱验证（SPA 内调用）
+app.post('/api/auth/verify', async (c) => {
+  const b = await readJson(c);
+  const token = String(b.token || '').trim();
+  if (!token) return fail('缺少验证令牌');
+  const u = await db.getUserByVerifyToken(c.env.DB, token);
+  if (!u) return fail('验证链接无效或已过期', 400);
+  await db.updateUser(c.env.DB, u.id, { verified: 1, verify_token: '' });
+  return ok({ ok: true });
+});
+
+// GET 兼容：邮件里直接点击链接（非 SPA 环境）时回跳到前端验证路由
+app.get('/api/auth/verify', async (c) => {
+  const token = c.req.query('token') || '';
+  const html =
+    '<!doctype html><meta charset="utf-8"><title>邮箱验证</title>'
+    + '<script>location.href="/#/verify/' + encodeURIComponent(token) + '"</script>'
+    + '<p style="font-family:system-ui;padding:24px;">正在跳转到验证页面…</p>';
+  return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
 });
 
 /* ============================================================
@@ -216,10 +311,10 @@ app.post('/api/threads/:id/like', async (c) => {
     if (t.user_id !== me.id) await db.addExp(c.env.DB, t.user_id, 2); // 收到赞 +2 经验
     await db.addExp(c.env.DB, me.id, 1); // 点赞者 +1 经验
   }
-  return ok({ liked: !now, likes: await db.countLikes(c.env.DB, 'thread', id) });
+  const likes = await db.countLikes(c.env.DB, 'thread', id);
+  await broadcastWS(c, 'like:new', { threadId: id, likes, liked: !now });
+  return ok({ liked: !now, likes });
 });
-
-// 发帖
 app.post('/api/threads', async (c) => {
   const u = user(c);
   if (!u) return fail('请先登录', 401);
@@ -236,6 +331,7 @@ app.post('/api/threads', async (c) => {
   if (!board) return fail('板块不存在');
   const id = await db.createThread(c.env.DB, { boardId, userId: u.id, title, body });
   await db.addExp(c.env.DB, u.id, 10); // 发帖 +10 经验
+  await broadcastWS(c, 'thread:new', { id, title, boardId, author: u.username });
   return ok({ id }, 201);
 });
 
@@ -264,6 +360,7 @@ app.post('/api/threads/:id/replies', async (c) => {
   if (body.length < 1) return fail('回复内容不能为空');
   await db.createReply(c.env.DB, { threadId: id, userId: u.id, body });
   await db.addExp(c.env.DB, u.id, 5); // 回复 +5 经验
+  await broadcastWS(c, 'reply:new', { threadId: id, author: u.username });
   return ok({ ok: true }, 201);
 });
 
@@ -301,6 +398,7 @@ app.post('/api/users/:username/follow', async (c) => {
   const now = await db.isFollowing(c.env.DB, me.id, target.id);
   if (now) await db.unfollow(c.env.DB, me.id, target.id);
   else await db.follow(c.env.DB, me.id, target.id);
+  await broadcastWS(c, 'follow:new', { follower: me.username, target: target.username, is_following: !now });
   return ok({ is_following: !now, followers: await db.countFollowers(c.env.DB, target.id) });
 });
 
@@ -347,6 +445,26 @@ app.get('/api/admin/stats', async (c) => {
   return ok({ users, threads, replies, banned });
 });
 
+// 列出 Resend 可用域名（后台填了 API 密钥后调用，用于选择发信域名）
+app.post('/api/admin/resend-domains', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const b = await readJson(c);
+  const key = String(b.api_key || '').trim();
+  if (!key) return fail('请先填写 API 密钥');
+  try {
+    const r = await fetch('https://api.resend.com/domains', {
+      headers: { Authorization: 'Bearer ' + key },
+    });
+    if (!r.ok) return fail('Resend 返回 ' + r.status + '，请检查密钥', r.status);
+    const data = await r.json() as { data?: { name: string; status: string }[] };
+    const domains = (data.data || []).map((d) => ({ name: d.name, status: d.status }));
+    return ok({ domains });
+  } catch (err) {
+    return fail('请求 Resend 失败：' + (err as Error).message);
+  }
+});
+
 // 修改站点设置
 app.post('/api/admin/settings', async (c) => {
   const e = requireAdmin(c);
@@ -354,11 +472,21 @@ app.post('/api/admin/settings', async (c) => {
   const b = await readJson(c);
   if (typeof b.site_name === 'string') await db.setSetting(c.env.DB, 'site_name', b.site_name);
   if (typeof b.site_accent === 'string') await db.setSetting(c.env.DB, 'site_accent', b.site_accent);
+  if (typeof b.site_desc === 'string') await db.setSetting(c.env.DB, 'site_desc', b.site_desc);
   if (typeof b.site_bg === 'string') {
     if (b.site_bg.length > 1_000_000) return fail('背景图太大，请压缩后再上传', 413);
     await db.setSetting(c.env.DB, 'site_bg', b.site_bg);
   }
-  if (typeof b.site_desc === 'string') await db.setSetting(c.env.DB, 'site_desc', b.site_desc);
+  if (typeof b.site_logo === 'string') {
+    if (b.site_logo.length > 1_000_000) return fail('LOGO 图片太大，请压缩后再上传', 413);
+    await db.setSetting(c.env.DB, 'site_logo', b.site_logo);
+  }
+  if (typeof b.resend_api_key === 'string') await db.setSetting(c.env.DB, 'resend_api_key', b.resend_api_key.trim());
+  if (typeof b.resend_domain === 'string') await db.setSetting(c.env.DB, 'resend_domain', b.resend_domain.trim());
+  if (typeof b.resend_from === 'string') await db.setSetting(c.env.DB, 'resend_from', b.resend_from.trim());
+  if (typeof b.email_verify_enabled === 'boolean') await db.setSetting(c.env.DB, 'email_verify_enabled', b.email_verify_enabled ? '1' : '0');
+  if (typeof b.ws_endpoint === 'string') await db.setSetting(c.env.DB, 'ws_endpoint', b.ws_endpoint.trim());
+  if (typeof b.ws_api_key === 'string') await db.setSetting(c.env.DB, 'ws_api_key', b.ws_api_key.trim());
   return ok({ ok: true });
 });
 

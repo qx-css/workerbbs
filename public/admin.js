@@ -16,8 +16,9 @@
     return data;
   }
 
-  let SETTINGS = { site_name: 'WorkerBBS', site_accent: '#0f6cbd', site_bg: '', site_desc: '' };
+  let SETTINGS = { site_name: 'WorkerBBS', site_accent: '#0f6cbd', site_bg: '', site_desc: '', site_logo: '' };
   let PENDING_BG = '';
+  let PENDING_LOGO = '';
 
   /* ===== 主题（与前台共用 localStorage.theme） ===== */
   function applyTheme() {
@@ -28,7 +29,7 @@
   }
 
   /* ===== 面板切换 ===== */
-  const TITLES = { overview: '概览', site: '站点设置', users: '用户管理', threads: '帖子管理' };
+  const TITLES = { overview: '概览', site: '站点设置', users: '用户管理', threads: '帖子管理', mail: '邮件设置', realtime: '实时同步' };
   function showPanel(name) {
     document.querySelectorAll('.snav').forEach((b) => b.classList.toggle('active', b.dataset.panel === name));
     document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('show', p.id === 'p-' + name));
@@ -52,12 +53,43 @@
     const prev = document.getElementById('bgPreview');
     const img = PENDING_BG || SETTINGS.site_bg;
     prev.style.backgroundImage = img ? 'url(' + img + ')' : '';
+    const lp = document.getElementById('logoPreview');
+    const logo = PENDING_LOGO || SETTINGS.site_logo;
+    lp.style.backgroundImage = logo ? 'url(' + logo + ')' : '';
     document.getElementById('sw').innerHTML =
       ['#0f6cbd', '#0e700e', '#107c10', '#b8135b', '#c23500', '#8a6d00']
         .map((c) => '<span class="swatch" data-c="' + c + '" style="background:' + c + '"></span>').join('');
     document.querySelectorAll('#sw .swatch').forEach((s) => {
       s.onclick = () => { document.getElementById('sAccent').value = s.dataset.c; document.documentElement.style.setProperty('--accent', s.dataset.c); };
     });
+  }
+
+  /* ===== 邮件设置（Resend） ===== */
+  function renderMail() {
+    document.getElementById('mKey').value = ''; // API 密钥属敏感信息，不回显，需重新输入才能「查看可用域」
+    const sel = document.getElementById('mDomain');
+    const saved = SETTINGS.resend_domain || '';
+    if (saved && !Array.from(sel.options).some((o) => o.value === saved)) {
+      const opt = document.createElement('option');
+      opt.value = saved; opt.textContent = saved + '（已保存）';
+      sel.appendChild(opt);
+    }
+    sel.value = saved;
+    const from = SETTINGS.resend_from || '';
+    document.getElementById('mPrefix').value = from.includes('@') ? from.split('@')[0] : '';
+    document.getElementById('mVerify').checked = SETTINGS.email_verify_enabled === true || SETTINGS.email_verify_enabled === '1';
+    updateFromPreview();
+  }
+  function updateFromPreview() {
+    const d = document.getElementById('mDomain').value || '域名';
+    const p = document.getElementById('mPrefix').value.trim() || '前缀';
+    document.getElementById('mFromPreview').textContent = p + '@' + d;
+  }
+
+  /* ===== 实时同步（WebSocket） ===== */
+  function renderRealtime() {
+    document.getElementById('rtEndpoint').value = SETTINGS.ws_endpoint || '';
+    document.getElementById('rtKey').value = SETTINGS.ws_api_key || '';
   }
 
   /* ===== 用户管理 ===== */
@@ -145,7 +177,7 @@
 
   /* ===== WinUI 图标：侧栏 / 返回 / 旋转提示 ===== */
   function enhanceIcons() {
-    const navIcons = { overview: 'home', site: 'settings', users: 'person', threads: 'comment' };
+    const navIcons = { overview: 'home', site: 'settings', users: 'person', threads: 'comment', mail: 'send', realtime: 'share' };
     document.querySelectorAll('.snav').forEach((b) => {
       const ic = navIcons[b.dataset.panel] || 'sparkle';
       const label = b.textContent.trim();
@@ -185,6 +217,11 @@
       document.getElementById('bgPreview').style.backgroundImage = 'url(' + dataUrl + ')';
       document.getElementById('siteMsg').textContent = '已选新背景，点保存后生效';
     });
+    document.getElementById('sLogo').onclick = () => pickImage(256, 0.92, (dataUrl) => {
+      PENDING_LOGO = dataUrl;
+      document.getElementById('logoPreview').style.backgroundImage = 'url(' + dataUrl + ')';
+      document.getElementById('siteMsg').textContent = '已选新 LOGO，点保存后生效';
+    });
 
     document.getElementById('saveSite').onclick = async () => {
       const msg = document.getElementById('siteMsg');
@@ -194,16 +231,69 @@
         site_accent: document.getElementById('sAccent').value,
       };
       if (PENDING_BG) payload.site_bg = PENDING_BG;
+      if (PENDING_LOGO) payload.site_logo = PENDING_LOGO;
       try {
         await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
         SETTINGS = await api('/api/settings');
-        PENDING_BG = '';
+        PENDING_BG = ''; PENDING_LOGO = '';
         renderSite(); applyTheme();
         document.getElementById('brandName').textContent = SETTINGS.site_name || 'WorkerBBS';
         msg.textContent = '已保存';
       } catch (e) { msg.textContent = e.message; }
     };
 
-    await Promise.all([renderStats(), renderUsers(), renderThreads()]);
+    /* 邮件设置 */
+    document.getElementById('mDomain').onchange = updateFromPreview;
+    document.getElementById('mPrefix').oninput = updateFromPreview;
+    document.getElementById('mListDomains').onclick = async () => {
+      const key = document.getElementById('mKey').value.trim();
+      const msg = document.getElementById('mDomainMsg');
+      if (!key) { msg.textContent = '请先填写 API 密钥'; return; }
+      msg.textContent = '请求中…';
+      try {
+        const r = await api('/api/admin/resend-domains', { method: 'POST', body: JSON.stringify({ api_key: key }) });
+        const sel = document.getElementById('mDomain');
+        sel.innerHTML = '<option value="">— 请选择域名 —</option>'
+          + r.domains.map((d) => '<option value="' + esc(d.name) + '">' + esc(d.name) + '（' + esc(d.status) + '）</option>').join('');
+        msg.textContent = '已列出 ' + r.domains.length + ' 个域名';
+      } catch (e) { msg.textContent = e.message; }
+    };
+    document.getElementById('saveMail').onclick = async () => {
+      const msg = document.getElementById('mailMsg');
+      const domain = document.getElementById('mDomain').value;
+      const prefix = document.getElementById('mPrefix').value.trim();
+      if (!domain || !prefix) { msg.textContent = '请先选择域名并填写前缀'; return; }
+      const payload = {
+        resend_domain: domain,
+        resend_from: prefix + '@' + domain,
+        email_verify_enabled: document.getElementById('mVerify').checked,
+      };
+      const key = document.getElementById('mKey').value.trim();
+      if (key) payload.resend_api_key = key; // 仅非空才更新，避免清空已保存的密钥
+      try {
+        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
+        SETTINGS = await api('/api/settings');
+        renderMail();
+        msg.textContent = '已保存';
+      } catch (e) { msg.textContent = e.message; }
+    };
+
+    /* 实时同步 */
+    document.getElementById('saveRealtime').onclick = async () => {
+      const msg = document.getElementById('rtMsg');
+      const payload = {
+        ws_endpoint: document.getElementById('rtEndpoint').value.trim(),
+      };
+      const key = document.getElementById('rtKey').value.trim();
+      if (key) payload.ws_api_key = key; // 仅非空才更新，避免清空已保存的密钥
+      try {
+        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
+        SETTINGS = await api('/api/settings');
+        renderRealtime();
+        msg.textContent = '已保存';
+      } catch (e) { msg.textContent = e.message; }
+    };
+
+    await Promise.all([renderStats(), renderUsers(), renderThreads(), Promise.resolve(renderMail()), Promise.resolve(renderRealtime())]);
   })();
 })();

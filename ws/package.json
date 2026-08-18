@@ -1,0 +1,14 @@
+{
+  "name": "workerbbs-ws",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WorkerBBS 实时同步 WebSocket 中继节点（独立 Worker）",
+  "scripts": {
+    "dev": "wrangler dev --config ws/wrangler.toml",
+    "deploy": "wrangler deploy --config ws/wrangler.toml"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240923.0",
+    "wrangler": "^3.80.0"
+  }
+}

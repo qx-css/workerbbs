@@ -66,6 +66,11 @@ export async function getUserByEmail(db: D1Database, email: string): Promise<Use
   return db.prepare('SELECT * FROM users WHERE email = ?').bind(email).first<User>();
 }
 
+export async function getUserByVerifyToken(db: D1Database, token: string): Promise<User | null> {
+  if (!token) return null;
+  return db.prepare('SELECT * FROM users WHERE verify_token = ?').bind(token).first<User>();
+}
+
 export async function createUser(
   db: D1Database,
   data: { username: string; email: string; passHash: string; role?: 'user' | 'admin' }

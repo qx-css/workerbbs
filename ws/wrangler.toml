@@ -1,0 +1,27 @@
+name = "workerbbs-ws"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+workers_dev = true
+
+# 变量（非密钥也可提交；API_KEY 属密钥，建议用 wrangler secret 注入）
+[vars]
+USER_ID = "default"
+NODE_DOMAIN = "ws.example.workers.dev"
+
+# API_KEY 为密钥，请用以下命令注入（不要写进文件）：
+#   wrangler secret put API_KEY --config ws/wrangler.toml
+#
+# 主仓库（workerbbs）里需要在「实时同步」设置中把：
+#   - WebSocket 端点  = 本节点的 wss 地址（如 wss://workerbbs-ws.<subdomain>.workers.dev）
+#   - API 密钥        = 与本处 API_KEY 完全一致的值
+# 两处 API_KEY 必须相同，主仓库发广播时靠它鉴权。
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "Relay"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Relay"]
