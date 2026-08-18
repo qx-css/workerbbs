@@ -134,19 +134,16 @@ async function sendVerificationEmail(c: any, email: string, token: string) {
 }
 
 /* ---------- 实时同步（WebSocket 中继节点） ---------- */
-// 主仓库配置 ws_endpoint（节点地址）与 ws_api_key（可选；用于鉴权广播）。
+// 主仓库只需配置 ws_endpoint（节点地址）。
 // 事件经节点的 /broadcast 接口推送给所有在线客户端。未配置则静默跳过。
 async function broadcastWS(c: any, type: string, payload: unknown): Promise<void> {
   const endpoint = await db.getSetting(c.env.DB, 'ws_endpoint');
-  const key = await db.getSetting(c.env.DB, 'ws_api_key');
   if (!endpoint) return;
   try {
     const url = endpoint.replace(/^wss?:\/\//, 'https://').replace(/\/+$/, '') + '/broadcast';
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (key) headers.Authorization = 'Bearer ' + key;
     await fetch(url, {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, payload }),
     });
   } catch {
@@ -500,30 +497,26 @@ app.post('/api/admin/resend-domains', async (c) => {
 });
 
 // 测试 WebSocket 中继节点是否正常（后台「测试连接」按钮调用）
-// 后端拿端点 + 密钥真去节点 /broadcast 推一条事件，验证可达性与密钥一致性。
+// 后端拿端点真去节点 /broadcast 推一条事件，验证可达性。
 app.post('/api/admin/ws-test', async (c) => {
   const e = requireAdmin(c);
   if (e) return e;
   const b = await readJson(c);
   const endpoint = String(b.endpoint || (await db.getSetting(c.env.DB, 'ws_endpoint')) || '').trim();
-  const key = String(b.key || (await db.getSetting(c.env.DB, 'ws_api_key')) || '').trim();
   if (!endpoint) return fail('请先填写 WebSocket 端点');
   const url = endpoint.replace(/^wss?:\/\//, 'https://').replace(/\/+$/, '') + '/broadcast';
   const ctrl: any = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const timer = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (key) headers.Authorization = 'Bearer ' + key;
     const r = await fetch(url, {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'ping', payload: { ts: Date.now(), source: 'workerbbs-test' } }),
       signal: ctrl ? ctrl.signal : undefined,
     });
     if (timer) clearTimeout(timer);
-    if (r.status === 401) return fail('API 密钥不匹配（节点返回 401），请确认两端密钥完全一致', 401);
     if (!r.ok) return fail('节点返回 HTTP ' + r.status + '，请确认节点已部署', r.status);
-    return ok({ ok: true, message: '广播链路正常：后端可连接节点且密钥正确' });
+    return ok({ ok: true, message: '广播链路正常：后端可连接节点' });
   } catch (err) {
     if (timer) clearTimeout(timer);
     return fail('无法连接节点：' + (err as Error).message + '，请确认端点可达', 502);
@@ -551,7 +544,6 @@ app.post('/api/admin/settings', async (c) => {
   if (typeof b.resend_from === 'string') await db.setSetting(c.env.DB, 'resend_from', b.resend_from.trim());
   if (typeof b.email_verify_enabled === 'boolean') await db.setSetting(c.env.DB, 'email_verify_enabled', b.email_verify_enabled ? '1' : '0');
   if (typeof b.ws_endpoint === 'string') await db.setSetting(c.env.DB, 'ws_endpoint', b.ws_endpoint.trim());
-  if (typeof b.ws_api_key === 'string') await db.setSetting(c.env.DB, 'ws_api_key', b.ws_api_key.trim());
   return ok({ ok: true });
 });
 

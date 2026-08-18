@@ -89,7 +89,6 @@
   /* ===== 实时同步（WebSocket） ===== */
   function renderRealtime() {
     document.getElementById('rtEndpoint').value = SETTINGS.ws_endpoint || '';
-    document.getElementById('rtKey').value = SETTINGS.ws_api_key || '';
   }
 
   /* ===== 主题 ===== */
@@ -324,8 +323,6 @@
       const payload = {
         ws_endpoint: document.getElementById('rtEndpoint').value.trim(),
       };
-      const key = document.getElementById('rtKey').value.trim();
-      if (key) payload.ws_api_key = key; // 仅非空才更新，避免清空已保存的密钥
       try {
         await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
         SETTINGS = await api('/api/settings');
@@ -344,14 +341,13 @@
       const btn = document.getElementById('testRealtime');
       const msg = document.getElementById('rtMsg');
       const endpoint = document.getElementById('rtEndpoint').value.trim();
-      const key = document.getElementById('rtKey').value.trim();
       if (!endpoint) { msg.textContent = '请先填写 WebSocket 端点'; return; }
       btn.disabled = true; btn.textContent = '测试中…'; msg.textContent = '';
       let out = '';
-      // 1) 后端广播链路测试（验证端点可达 + 密钥正确）
+      // 1) 后端广播链路测试（验证端点可达）
       let backendOk = false;
       try {
-        const r = await api('/api/admin/ws-test', { method: 'POST', body: JSON.stringify({ endpoint, key }) });
+        const r = await api('/api/admin/ws-test', { method: 'POST', body: JSON.stringify({ endpoint }) });
         backendOk = true;
         out += '✅ 后端广播：' + (r.message || '广播链路正常') + '\n';
       } catch (e) {

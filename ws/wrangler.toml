@@ -11,14 +11,9 @@ workers_dev = true
 USER_ID = "default"
 NODE_DOMAIN = "ws.example.workers.dev"
 
-# API_KEY 为可选广播鉴权密钥（留空则节点不鉴权）：
-#   wrangler secret put API_KEY --config ws/wrangler.toml
-# 不设：任意来源均可经 /broadcast 推送事件（部署最简单）。
-# 设了：主仓库「实时同步」的 API 密钥须与之完全一致，否则广播 401。
-#
 # 主仓库（workerbbs）「实时同步」只需填：
 #   - WebSocket 端点  = 本节点的 wss 地址（如 wss://workerbbs-ws.<subdomain>.workers.dev）
-#   - API 密钥        = 可选；仅当上面设了 API_KEY 时才需要填相同值。
+# 无需 API 密钥，节点开放广播。
 
 [[durable_objects.bindings]]
 name = "RELAY"

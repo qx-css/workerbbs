@@ -231,8 +231,7 @@
             <div class="card">
               <h2>实时同步（WebSocket 节点）</h2>
               <div class="field"><label>WebSocket 端点</label><input id="rtEndpoint" placeholder="wss://ws.example.workers.dev"></div>
-              <div class="field"><label>API 密钥（可选，留空则不鉴权）</label><input id="rtKey" type="password" placeholder="留空即可"></div>
-              <p class="muted" style="line-height:1.7;">节点需作为独立 Worker 单独部署（见仓库 <b>ws/</b> 目录）。部署后把节点地址填到「WebSocket 端点」即可，发帖 / 回复 / 点赞 / 关注等事件会实时推送给在线用户。若节点设置了 API_KEY，则此处填相同值才允许广播。</p>
+              <p class="muted" style="line-height:1.7;">节点需作为独立 Worker 单独部署（见仓库 <b>ws/</b> 目录）。部署后把节点地址填到「WebSocket 端点」即可，发帖 / 回复 / 点赞 / 关注等事件会实时推送给在线用户。无需密钥。</p>
               <div class="row"><button class="btn primary" id="saveRealtime">保存</button><button class="btn" id="testRealtime">测试连接</button><span class="muted" id="rtMsg"></span></div>
               <pre class="rt-result" id="rtResult" style="display:none;"></pre>
             </div>

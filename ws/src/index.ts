@@ -1,13 +1,12 @@
 // WorkerBBS WebSocket 中继节点（独立 Worker）
 // ---------------------------------------------------------------------------
-// 变量（在 ws/wrangler.toml 的 [vars] 或 secret 中配置）：
-//   API_KEY     —— 广播鉴权密钥（可选；留空则节点不鉴权，任意来源均可广播）
+// 变量（在 ws/wrangler.toml 的 [vars] 中配置）：
 //   USER_ID     —— 频道 / 租户标识（同一节点可服务多个论坛，靠它隔离）
 //   NODE_DOMAIN —— 节点域名（仅用于展示/记录）
 //
-// 主仓库（workerbbs）在「实时同步」设置里填：
+// 主仓库（workerbbs）在「实时同步」设置里只需填：
 //   WebSocket 端点 = wss://<本节点地址>
-//   API 密钥       = 可选（留空则节点不鉴权）
+// （无 API 密钥，节点开放广播。）
 // ---------------------------------------------------------------------------
 
 interface Session {
@@ -30,10 +29,6 @@ export class Relay {
 
     // 1) 广播接口（主仓库调用，用于把事件推给所有在线客户端）
     if (url.pathname === '/broadcast') {
-      const auth = request.headers.get('Authorization') || '';
-      const expect = 'Bearer ' + (this.env.API_KEY || '');
-      // API_KEY 未配置则跳过鉴权（开放广播）；配置了则要求 Bearer 一致
-      if (this.env.API_KEY && auth !== expect) return new Response('unauthorized', { status: 401 });
       let body: any = {};
       try { body = await request.json(); } catch { return new Response('bad json', { status: 400 }); }
       const ch = (typeof body.channel === 'string' && body.channel) || channel;
