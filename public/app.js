@@ -100,6 +100,13 @@
     });
     html += '<span class="spacer"></span>';
     html += '<button class="nav-item" data-label="设置" data-view="#/settings">' + WI('settings', 20) + '</button>';
+    // 插件导航项（由 window.WB.plugins 注入）
+    const WBP = window.WB && window.WB.plugins ? window.WB.plugins : {};
+    Object.keys(WBP).forEach((pid) => {
+      const p = WBP[pid];
+      const icon = (typeof p.icon === 'string' && p.icon) ? p.icon : WI('sparkle', 20);
+      html += '<button class="nav-item" data-label="' + esc(p.name || pid) + '" data-view="#/plugin/' + pid + '">' + icon + '</button>';
+    });
     html += '<span class="selector"><span class="sel-bg"></span><span class="sel-bar"></span></span>';
     rail.innerHTML = html;
     rail.querySelectorAll('.nav-item').forEach((b) => {
@@ -670,6 +677,10 @@
     if (hash.startsWith('#/thread/')) return viewThread(hash.split('/')[2]);
     if (hash.startsWith('#/user/')) return viewUser(hash.split('/')[2]);
     if (hash.startsWith('#/verify/')) return viewVerify(hash.split('/')[2]);
+    if (hash.startsWith('#/plugin/')) {
+      const parts = hash.split('/');
+      return viewPlugin(parts[2] || '', parts.slice(3).join('/'));
+    }
     const fn = routes[hash] || viewHome;
     try { await fn(); } catch (e) { content.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
   }
@@ -691,6 +702,22 @@
     document.getElementById('goLogin').onclick = () => { location.hash = '#/home'; openAuth(); };
   }
   window.addEventListener('hashchange', router);
+
+  /* ===== 插件页面分发 ===== */
+  async function viewPlugin(id, sub) {
+    const p = (window.WB && window.WB.plugins) ? window.WB.plugins[id] : null;
+    if (!p) {
+      content.innerHTML = '<div class="empty">未安装或已禁用的插件：' + esc(id) + '</div>';
+      return;
+    }
+    content.innerHTML = '<div class="content-inner" id="plugin-root"></div>';
+    try {
+      const root = document.getElementById('plugin-root');
+      await p.render(root, { sub: sub, api: api, WI: WI, esc: esc, SETTINGS: SETTINGS, ME: ME });
+    } catch (e) {
+      content.innerHTML = '<div class="empty">插件加载失败：' + esc(e.message) + '</div>';
+    }
+  }
 
   /* ===== 启动 ===== */
   (async function init() {

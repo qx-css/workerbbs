@@ -3,6 +3,7 @@ import type { Bindings, User } from './types';
 import * as db from './db';
 import { hashPassword, verifyPassword } from './auth';
 import { unzipSync, strFromU8 } from 'fflate';
+import { registerPlugins, runHook, captureEnv, syncPluginsToDb, flushPluginCache } from './plugins';
 
 type AppEnv = { Bindings: Bindings; Variables: { user: User | null } };
 const app = new Hono<AppEnv>();
@@ -26,11 +27,15 @@ function cookieHeader(name: string, value: string, maxAge?: number): string {
 
 /* ---------- 中间件：加载当前登录用户 ---------- */
 app.use('*', async (c, next) => {
+  captureEnv(c.env);
   const sid = getCookie(c, SID);
   const user = await db.getUserBySession(c.env.DB, sid);
   c.set('user', user);
   await next();
 });
+
+/* ---------- 插件系统：注册所有内置插件（挂载路由 + 订阅钩子） ---------- */
+registerPlugins(app);
 
 /* ---------- 小工具 ---------- */
 function user(c: any): User | null {
@@ -173,6 +178,7 @@ app.post('/api/auth/register', async (c) => {
 
   const passHash = await hashPassword(password);
   const id = await db.createUser(c.env.DB, { username, email, passHash });
+  await runHook('user:registered', c, { userId: id, username, email });
 
   const verifyEnabled = (await db.getSetting(c.env.DB, 'email_verify_enabled')) === '1';
   const resendReady = !!(await db.getSetting(c.env.DB, 'resend_api_key')) && !!(await db.getSetting(c.env.DB, 'resend_from'));
@@ -318,6 +324,7 @@ app.post('/api/threads/:id/like', async (c) => {
   }
   const likes = await db.countLikes(c.env.DB, 'thread', id);
   await broadcastWS(c, 'like:new', { threadId: id, likes, liked: !now });
+  await runHook('thread:liked', c, { threadId: id, liked: !now, byUserId: me.id, userId: t.user_id });
   return ok({ liked: !now, likes });
 });
 app.post('/api/threads', async (c) => {
@@ -337,6 +344,7 @@ app.post('/api/threads', async (c) => {
   const id = await db.createThread(c.env.DB, { boardId, userId: u.id, title, body });
   await db.addExp(c.env.DB, u.id, 10); // 发帖 +10 经验
   await broadcastWS(c, 'thread:new', { id, title, boardId, author: u.username });
+  await runHook('thread:created', c, { threadId: id, title, boardId, author: u.username, userId: u.id });
   return ok({ id }, 201);
 });
 
@@ -366,6 +374,7 @@ app.post('/api/threads/:id/replies', async (c) => {
   await db.createReply(c.env.DB, { threadId: id, userId: u.id, body });
   await db.addExp(c.env.DB, u.id, 5); // 回复 +5 经验
   await broadcastWS(c, 'reply:new', { threadId: id, author: u.username });
+  await runHook('reply:created', c, { threadId: id, author: u.username, userId: u.id });
   return ok({ ok: true }, 201);
 });
 
@@ -404,6 +413,7 @@ app.post('/api/users/:username/follow', async (c) => {
   if (now) await db.unfollow(c.env.DB, me.id, target.id);
   else await db.follow(c.env.DB, me.id, target.id);
   await broadcastWS(c, 'follow:new', { follower: me.username, target: target.username, is_following: !now });
+  await runHook('user:followed', c, { followerId: me.id, targetId: target.id, is_following: !now });
   return ok({ is_following: !now, followers: await db.countFollowers(c.env.DB, target.id) });
 });
 
@@ -576,6 +586,33 @@ app.post('/api/admin/theme/remove', async (c) => {
   if (e) return e;
   await db.setSetting(c.env.DB, 'theme_css', '');
   await db.setSetting(c.env.DB, 'theme_name', '');
+  return ok({ ok: true });
+});
+
+/* ============================================================
+ *  插件管理
+ * ============================================================ */
+
+// 列出所有内置插件及其启用状态
+app.get('/api/admin/plugins', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  await syncPluginsToDb(c.env);
+  const rows = await db.listPlugins(c.env.DB);
+  return ok({ plugins: rows });
+});
+
+// 启用 / 禁用插件
+app.post('/api/admin/plugins', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const b = await readJson(c);
+  const id = String(b.id || '').trim();
+  if (!id) return fail('缺少插件 id');
+  const enabled = b.enabled ? 1 : 0;
+  await db.ensurePlugin(c.env.DB, id, id);
+  await db.setPluginEnabled(c.env.DB, id, enabled);
+  flushPluginCache(id); // 立即刷新缓存，开关即时生效
   return ok({ ok: true });
 });
 

@@ -271,3 +271,66 @@ export async function countLikes(db: D1Database, targetType: 'thread' | 'reply',
   const r = await db.prepare('SELECT COUNT(*) c FROM likes WHERE target_type = ? AND target_id = ?').bind(targetType, targetId).first<{ c: number }>();
   return r ? r.c : 0;
 }
+
+/* ============ 插件 ============ */
+
+export interface PluginRow {
+  id: string;
+  name: string;
+  enabled: number;
+  config: string;
+}
+
+/** 列出所有插件行（含 enabled / config） */
+export async function listPlugins(db: D1Database): Promise<PluginRow[]> {
+  return (await db.prepare('SELECT * FROM plugins').all()).results as unknown as PluginRow[];
+}
+
+/** 若插件行不存在则插入（默认禁用），保证管理端始终能看到所有内置插件 */
+export async function ensurePlugin(db: D1Database, id: string, name: string): Promise<void> {
+  await db
+    .prepare('INSERT OR IGNORE INTO plugins (id, name, enabled, config) VALUES (?, ?, 0, ?)')
+    .bind(id, name, '{}')
+    .run();
+}
+
+export async function setPluginEnabled(db: D1Database, id: string, enabled: number): Promise<void> {
+  await db.prepare('UPDATE plugins SET enabled = ? WHERE id = ?').bind(enabled ? 1 : 0, id).run();
+}
+
+/** 读取插件配置项（config 为 JSON 对象） */
+export async function getPluginConfig(db: D1Database, plugin: string, key: string, fallback = ''): Promise<string> {
+  const row = await db.prepare('SELECT config FROM plugins WHERE id = ?').bind(plugin).first<{ config: string }>();
+  if (!row) return fallback;
+  try {
+    const o = JSON.parse(row.config || '{}');
+    return Object.prototype.hasOwnProperty.call(o, key) ? String(o[key]) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function setPluginConfig(db: D1Database, plugin: string, key: string, value: string): Promise<void> {
+  const row = await db.prepare('SELECT config FROM plugins WHERE id = ?').bind(plugin).first<{ config: string }>();
+  let o: Record<string, unknown> = {};
+  try {
+    o = JSON.parse((row && row.config) || '{}');
+  } catch {
+    o = {};
+  }
+  o[key] = value;
+  await db.prepare('UPDATE plugins SET config = ? WHERE id = ?').bind(JSON.stringify(o), plugin).run();
+}
+
+/** 插件 KV（命名空间隔离，plugin 前缀避免冲突） */
+export async function getPluginKv(db: D1Database, plugin: string, k: string, fallback = ''): Promise<string> {
+  const row = await db.prepare('SELECT v FROM plugin_kv WHERE plugin = ? AND k = ?').bind(plugin, k).first<{ v: string }>();
+  return row ? row.v : fallback;
+}
+
+export async function setPluginKv(db: D1Database, plugin: string, k: string, v: string): Promise<void> {
+  await db
+    .prepare('INSERT INTO plugin_kv (plugin, k, v) VALUES (?, ?, ?) ON CONFLICT(plugin, k) DO UPDATE SET v = excluded.v')
+    .bind(plugin, k, v)
+    .run();
+}

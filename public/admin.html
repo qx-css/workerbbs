@@ -131,6 +131,7 @@
       <button class="snav" data-panel="mail">邮件设置</button>
       <button class="snav" data-panel="realtime">实时同步</button>
       <button class="snav" data-panel="theme">主题</button>
+      <button class="snav" data-panel="plugins">插件</button>
       <span class="spacer"></span>
       <div class="foot">
         <div class="row" style="justify-content:space-between;padding:0 4px;">
@@ -261,6 +262,18 @@
                 <span style="padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);">卡片</span>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section class="panel" id="p-plugins">
+          <div class="card">
+            <h2>插件管理</h2>
+            <p class="muted" style="margin:0 0 16px;line-height:1.7;">插件随主仓库部署，在此启用 / 禁用。禁用后其路由仍挂载但会返回「插件未启用」，钩子也不再触发。</p>
+            <table class="admin">
+              <thead><tr><th>插件</th><th>说明</th><th>版本</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="pluginRows"></tbody>
+            </table>
+            <span class="muted" id="pluginMsg" style="display:block;margin-top:12px;"></span>
           </div>
         </section>
       </div>
