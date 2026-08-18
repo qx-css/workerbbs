@@ -30,7 +30,7 @@
   }
   /* 站点背景图（来自设置） */
   #bg {
-    position: fixed; inset: 0; z-index: -1; background: #fff center/cover no-repeat;
+    position: fixed; inset: 0; z-index: -1; background: var(--bg) center/cover no-repeat;
     transition: background-image var(--dur-normal) var(--ease-std);
   }
 
@@ -282,6 +282,8 @@
     --accent: #4aa3ff;
   }
   [data-theme="dark"] .post-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.5); }
+  /* 深色模式下全屏背景图压暗一层，避免亮图刺眼 */
+  [data-theme="dark"] #bg::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,0.35); }
   /* 深色下把封面压暗（用叠加层，不改图，也不引入渐变色块） */
   [data-theme="dark"] .profile-cover::before { content: ""; position: absolute; inset: 0; background: rgba(8,14,10,0.42); z-index: 1; }
   [data-theme="dark"] .nav-toggle::after, [data-theme="dark"] .nav-item::after { background: #f3f3f3; color: #161616; }
