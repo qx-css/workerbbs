@@ -294,6 +294,59 @@
       } catch (e) { msg.textContent = e.message; }
     };
 
+    /* 测试 WebSocket 节点：后端广播测试 + 浏览器 WS 握手测试 */
+    function showTestResult(text) {
+      const el = document.getElementById('rtResult');
+      el.textContent = text;
+      el.style.display = 'block';
+    }
+    document.getElementById('testRealtime').onclick = async () => {
+      const btn = document.getElementById('testRealtime');
+      const msg = document.getElementById('rtMsg');
+      const endpoint = document.getElementById('rtEndpoint').value.trim();
+      const key = document.getElementById('rtKey').value.trim();
+      if (!endpoint) { msg.textContent = '请先填写 WebSocket 端点'; return; }
+      btn.disabled = true; btn.textContent = '测试中…'; msg.textContent = '';
+      let out = '';
+      // 1) 后端广播链路测试（验证端点可达 + 密钥正确）
+      let backendOk = false;
+      try {
+        const r = await api('/api/admin/ws-test', { method: 'POST', body: JSON.stringify({ endpoint, key }) });
+        backendOk = true;
+        out += '✅ 后端广播：' + (r.message || '广播链路正常') + '\n';
+      } catch (e) {
+        out += '❌ 后端广播：' + e.message + '\n';
+      }
+      // 2) 浏览器 WebSocket 握手测试（验证客户端能连上 /ws）
+      if ('WebSocket' in window) {
+        const wsUrl = endpoint.replace(/\/$/, '') + '/ws';
+        await new Promise((resolve) => {
+          let done = false;
+          const sock = new WebSocket(wsUrl);
+          const to = setTimeout(() => {
+            if (done) return; done = true;
+            try { sock.close(); } catch {}
+            out += '❌ 浏览器握手：连接超时（' + wsUrl + '）\n';
+            resolve();
+          }, 3500);
+          sock.onopen = () => {
+            if (done) return; done = true; clearTimeout(to);
+            try { sock.close(); } catch {}
+            out += '✅ 浏览器握手：WebSocket 连接成功（' + wsUrl + '）\n';
+            resolve();
+          };
+          sock.onerror = () => {
+            if (done) return; done = true; clearTimeout(to);
+            out += '❌ 浏览器握手：连接失败（' + wsUrl + '），请确认节点已部署且支持 /ws\n';
+            resolve();
+          };
+        });
+      }
+      btn.disabled = false; btn.textContent = '测试连接';
+      msg.textContent = backendOk ? '连接正常' : '连接异常';
+      showTestResult(out.trim());
+    };
+
     await Promise.all([renderStats(), renderUsers(), renderThreads(), Promise.resolve(renderMail()), Promise.resolve(renderRealtime())]);
   })();
 })();

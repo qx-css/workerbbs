@@ -78,6 +78,10 @@
   .swatch { width: 24px; height: 24px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; }
   .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .muted { color: var(--text-2); font-size: 12px; }
+  .rt-result { white-space: pre-wrap; font-family: var(--font); font-size: 12px; line-height: 1.7;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;
+    margin: 14px 0 0; color: var(--text); }
+  .btn[disabled] { opacity: .6; cursor: default; }
 
   table.admin { width: 100%; border-collapse: collapse; font-size: 13px; }
   table.admin th, table.admin td { text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--border); }
@@ -227,7 +231,8 @@
               <div class="field"><label>WebSocket 端点</label><input id="rtEndpoint" placeholder="wss://ws.example.workers.dev"></div>
               <div class="field"><label>API 密钥（用于广播鉴权）</label><input id="rtKey" type="password" placeholder="与节点 API_KEY 一致"></div>
               <p class="muted" style="line-height:1.7;">节点需作为独立 Worker 单独部署（见仓库 <b>ws/</b> 目录）。部署后把节点地址填到「WebSocket 端点」，并把节点里设置的 <b>API_KEY</b> 填到此处，发帖 / 回复 / 点赞 / 关注等事件就会实时推送给在线用户。</p>
-              <div class="row"><button class="btn primary" id="saveRealtime">保存</button><span class="muted" id="rtMsg"></span></div>
+              <div class="row"><button class="btn primary" id="saveRealtime">保存</button><button class="btn" id="testRealtime">测试连接</button><span class="muted" id="rtMsg"></span></div>
+              <pre class="rt-result" id="rtResult" style="display:none;"></pre>
             </div>
           </div>
         </section>

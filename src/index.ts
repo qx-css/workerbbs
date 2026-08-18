@@ -465,6 +465,35 @@ app.post('/api/admin/resend-domains', async (c) => {
   }
 });
 
+// 测试 WebSocket 中继节点是否正常（后台「测试连接」按钮调用）
+// 后端拿端点 + 密钥真去节点 /broadcast 推一条事件，验证可达性与密钥一致性。
+app.post('/api/admin/ws-test', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const b = await readJson(c);
+  const endpoint = String(b.endpoint || (await db.getSetting(c.env.DB, 'ws_endpoint')) || '').trim();
+  const key = String(b.key || (await db.getSetting(c.env.DB, 'ws_api_key')) || '').trim();
+  if (!endpoint) return fail('请先填写 WebSocket 端点');
+  const url = endpoint.replace(/^wss?:\/\//, 'https://').replace(/\/+$/, '') + '/broadcast';
+  const ctrl: any = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 5000) : null;
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'ping', payload: { ts: Date.now(), source: 'workerbbs-test' } }),
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    if (timer) clearTimeout(timer);
+    if (r.status === 401) return fail('API 密钥不匹配（节点返回 401），请确认两端密钥完全一致', 401);
+    if (!r.ok) return fail('节点返回 HTTP ' + r.status + '，请确认节点已部署', r.status);
+    return ok({ ok: true, message: '广播链路正常：后端可连接节点且密钥正确' });
+  } catch (err) {
+    if (timer) clearTimeout(timer);
+    return fail('无法连接节点：' + (err as Error).message + '，请确认端点可达', 502);
+  }
+});
+
 // 修改站点设置
 app.post('/api/admin/settings', async (c) => {
   const e = requireAdmin(c);

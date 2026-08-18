@@ -627,7 +627,7 @@
     if (!SETTINGS.ws_endpoint || !ME) return;
     if (wsSock && (wsSock.readyState === WebSocket.CONNECTING || wsSock.readyState === WebSocket.OPEN)) return;
     try {
-      const s = new WebSocket(SETTINGS.ws_endpoint);
+      const s = new WebSocket(SETTINGS.ws_endpoint.replace(/\/$/, '') + '/ws');
       wsSock = s;
       s.onopen = () => { wsRetry = 0; };
       s.onmessage = (ev) => {
