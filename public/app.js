@@ -5,7 +5,6 @@
   const modalRoot = document.getElementById('modal-root');
   const bg = document.getElementById('bg');
 
-  let ICONS = {};
   let SETTINGS = { site_name: 'WorkerBBS', site_accent: '#0f6cbd', site_bg: '', site_desc: '' };
   let ME = null;
   let BOARDS = [];
@@ -13,6 +12,52 @@
   const DEFAULT_BIO = '此人很懒，没有留下个人简介';
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  /* 富文本：只允许的安全标签/属性白名单（渲染前必过，防 XSS） */
+  const ALLOWED_TAGS = { P:1, BR:1, DIV:1, SPAN:1, B:1, STRONG:1, I:1, EM:1, U:1, S:1, STRIKE:1, UL:1, OL:1, LI:1, BLOCKQUOTE:1, A:1, IMG:1, VIDEO:1, H1:1, H2:1, H3:1, CODE:1, PRE:1 };
+  function sanitizeHTML(html) {
+    if (typeof html !== 'string') return '';
+    const doc = new DOMParser().parseFromString('<div>' + html + '</div>', 'text/html');
+    const root = doc.body.firstChild;
+    function walk(node) {
+      const kids = Array.from(node.childNodes);
+      for (const ch of kids) {
+        if (ch.nodeType !== 1) continue; // 只处理元素节点，文本原样保留
+        const tag = ch.tagName;
+        if (!ALLOWED_TAGS[tag]) { // 不允许的标签：拆掉外壳、保留其子孙
+          walk(ch);
+          while (ch.firstChild) node.insertBefore(ch.firstChild, ch);
+          node.removeChild(ch);
+          continue;
+        }
+        for (const attr of Array.from(ch.attributes)) {
+          const n = attr.name.toLowerCase();
+          const v = attr.value.trim().toLowerCase();
+          let ok = false;
+          if (n === 'href' && (v.startsWith('http://') || v.startsWith('https://') || v.startsWith('mailto:'))) ok = true;
+          else if (n === 'src' && (v.startsWith('http://') || v.startsWith('https://') || v.startsWith('/') || v.startsWith('data:image') || v.startsWith('data:video'))) ok = true;
+          else if (n === 'alt' || n === 'poster' || n === 'controls') ok = true;
+          if (!ok) ch.removeAttribute(attr.name);
+        }
+        if (tag === 'VIDEO' && !ch.hasAttribute('controls')) ch.setAttribute('controls', '');
+        walk(ch);
+      }
+    }
+    walk(root);
+    return root.innerHTML;
+  }
+  /* 渲染帖子正文：纯文本老帖子保留换行，HTML 帖子走白名单清洗 */
+  function renderBody(body) {
+    if (typeof body !== 'string') return '';
+    if (!body.trim().startsWith('<')) return esc(body).replace(/\n/g, '<br>');
+    return sanitizeHTML(body);
+  }
+  /* 取纯文本（用于卡片摘要） */
+  function htmlToText(html) {
+    const d = document.createElement('div');
+    d.innerHTML = (typeof html === 'string') ? html : '';
+    return (d.textContent || '').replace(/\s+/g, ' ').trim();
+  }
   // clickable=false 时不挂 data-user（例如自己的主页，头像用于双击换图，不再跳转）
   function avatarHTML(u, clickable) {
     const cls = 'avatar' + (clickable === false ? '' : ' clickable');
@@ -41,14 +86,7 @@
     return new Date(ts).toLocaleDateString();
   }
 
-  /* ===== 图标 ===== */
-  async function loadIcons() {
-    const names = ['navigation', 'home', 'search', 'add', 'person', 'settings'];
-    await Promise.all(names.map(async (n) => {
-      try { ICONS[n] = await (await fetch('/icons/' + n + '.svg')).text(); } catch (e) { ICONS[n] = ''; }
-    }));
-  }
-
+  /* ===== 图标（WinUI / Fluent 风格，见 public/icons.js）===== */
   function buildRail() {
     const items = [
       { n: 'home', label: '首页', view: '#/home' },
@@ -56,12 +94,12 @@
       { n: 'add', label: '发帖', view: '#/compose' },
       { n: 'person', label: '我的', view: '#/profile' },
     ];
-    let html = '<button class="nav-toggle" data-label="菜单" aria-label="菜单">' + ICONS.navigation + '</button>';
+    let html = '<button class="nav-toggle" data-label="菜单" aria-label="菜单">' + WI('navigation', 20) + '</button>';
     items.forEach((it) => {
-      html += '<button class="nav-item" data-label="' + it.label + '" data-view="' + it.view + '">' + ICONS[it.n] + '</button>';
+      html += '<button class="nav-item" data-label="' + it.label + '" data-view="' + it.view + '">' + WI(it.n, 20) + '</button>';
     });
     html += '<span class="spacer"></span>';
-    html += '<button class="nav-item" data-label="设置" data-view="#/settings">' + ICONS.settings + '</button>';
+    html += '<button class="nav-item" data-label="设置" data-view="#/settings">' + WI('settings', 20) + '</button>';
     html += '<span class="selector"><span class="sel-bg"></span><span class="sel-bar"></span></span>';
     rail.innerHTML = html;
     rail.querySelectorAll('.nav-item').forEach((b) => {
@@ -96,13 +134,14 @@
     return '<article class="post-card" data-id="' + t.id + '">'
       + '<span class="post-tag">' + esc(t.board_name || '') + '</span>'
       + '<h3 class="post-title">' + esc(t.title) + '</h3>'
-      + '<p class="post-snippet">' + esc(t.body) + '</p>'
+      + '<p class="post-snippet">' + esc(htmlToText(t.body).slice(0, 120)) + '</p>'
       + '<div class="post-meta">'
       + avatarHTML(a)
       + '<span class="name" data-user="' + esc(a.username || '') + '">' + esc(a.username || '匿名') + '</span>'
       + (a.level ? '<span class="lvl">Lv.' + a.level + '</span>' : '')
       + '<span class="dot"></span><span>' + esc(timeAgo(t.created_at)) + '</span>'
-      + '<span class="right"><span>回复 ' + (t.reply_count || 0) + '</span><span>浏览 ' + t.views + '</span></span>'
+      + '<span class="right"><span><span class="meta-ico">' + WI('comment', 14) + '</span>回复 ' + (t.reply_count || 0) + '</span>'
+      + '<span><span class="meta-ico">' + WI('eye', 14) + '</span>浏览 ' + t.views + '</span></span>'
       + '</div></article>';
   }
 
@@ -154,26 +193,78 @@
   async function viewCompose() {
     if (!ME) { openAuth(); return; }
     const opts = BOARDS.map((b) => '<option value="' + b.id + '">' + esc(b.name) + '</option>').join('');
+    const tb = (cmd, title) => '<button type="button" class="rte-btn" data-cmd="' + cmd + '" title="' + title + '">' + WI(cmd, 18) + '</button>';
+    const sep = '<span class="rte-sep"></span>';
     content.innerHTML =
-      '<div class="appbar"><h1>发帖</h1></div><div class="content-inner"><div class="compose">'
+      '<div class="appbar"><button class="btn" id="backBtn">' + WI('chevronLeft', 18) + ' 返回</button><h1>发帖</h1><span class="spacer"></span></div>'
+      + '<div class="content-inner"><div class="compose">'
       + '<label>板块</label><select id="cBoard">' + opts + '</select>'
       + '<label>标题</label><input id="cTitle" placeholder="一句话说清楚" />'
-      + '<label>正文</label><textarea id="cBody" placeholder="说点什么…"></textarea>'
-      + '<div class="row"><button class="btn" id="cCancel">取消</button>'
+      + '<label>正文</label>'
+      + '<div class="rte-wrap">'
+      + '<div class="rte-toolbar" id="rteBar">'
+      + tb('bold', '加粗') + tb('italic', '斜体') + tb('underline', '下划线') + tb('strike', '删除线') + sep
+      + tb('heading', '标题') + tb('list', '无序列表') + tb('listOrdered', '有序列表') + tb('quote', '引用') + sep
+      + tb('link', '链接') + tb('image', '图片') + '<button type="button" class="rte-btn" data-act="video" title="视频">' + WI('video', 18) + '</button>'
+      + '</div>'
+      + '<div class="rte" id="cBody" contenteditable="true" data-placeholder="说点什么…支持文字、图片和视频"></div>'
+      + '</div>'
+      + '<div class="row"><span class="muted" id="cHint">视频以 base64 内嵌，建议小于 700KB</span><span class="spacer"></span>'
+      + '<button class="btn" id="cCancel">取消</button>'
       + '<button class="btn primary" id="cSubmit">发布</button></div>'
       + '<div class="err" id="cErr"></div></div></div>';
+
+    document.getElementById('backBtn').onclick = () => (location.hash = '#/home');
     document.getElementById('cCancel').onclick = () => (location.hash = '#/home');
+
+    const ed = document.getElementById('cBody');
+    document.getElementById('rteBar').addEventListener('click', (e) => {
+      const b = e.target.closest('.rte-btn'); if (!b) return;
+      e.preventDefault();
+      ed.focus();
+      const cmd = b.dataset.cmd, act = b.dataset.act;
+      if (cmd === 'bold' || cmd === 'italic' || cmd === 'underline' || cmd === 'strike') document.execCommand(cmd);
+      else if (cmd === 'list') document.execCommand('insertUnorderedList');
+      else if (cmd === 'listOrdered') document.execCommand('insertOrderedList');
+      else if (cmd === 'heading') document.execCommand('formatBlock', false, 'H3');
+      else if (cmd === 'quote') document.execCommand('formatBlock', false, 'BLOCKQUOTE');
+      else if (cmd === 'link') { const url = prompt('链接地址（以 http/https 开头）'); if (url) document.execCommand('createLink', false, url); }
+      else if (act === 'image') insertPostImage();
+      else if (act === 'video') insertPostVideo();
+    });
+
     document.getElementById('cSubmit').onclick = async () => {
       const title = document.getElementById('cTitle').value.trim();
-      const body = document.getElementById('cBody').value.trim();
+      const raw = ed.innerHTML;
+      const html = sanitizeHTML(raw);
+      const text = htmlToText(html);
       const boardId = document.getElementById('cBoard').value;
       const err = document.getElementById('cErr');
-      if (!title || !body) { err.textContent = '标题和正文都要填'; return; }
+      if (!title) { err.textContent = '标题不能为空'; return; }
+      if (!text.trim()) { err.textContent = '正文不能为空'; return; }
+      if (new Blob([html]).size > 950000) { err.textContent = '内容过大（含媒体超过 D1 约 1MB 上限），请压缩视频或缩短正文'; return; }
       try {
-        const d = await api('/api/threads', { method: 'POST', body: JSON.stringify({ board_id: boardId, title, body }) });
+        const d = await api('/api/threads', { method: 'POST', body: JSON.stringify({ board_id: boardId, title, body: html }) });
         location.hash = '#/thread/' + d.id;
       } catch (e) { err.textContent = e.message; }
     };
+  }
+
+  /* 在富文本光标处插入 HTML */
+  function insertHTMLAtCursor(htmlStr) {
+    const ed = document.getElementById('cBody');
+    if (ed) ed.focus();
+    if (document.execCommand) document.execCommand('insertHTML', false, htmlStr);
+  }
+  function insertPostImage() {
+    pickImage(1280, 0.82, async (dataUrl) => {
+      insertHTMLAtCursor('<img src="' + dataUrl + '" alt="">');
+    });
+  }
+  function insertPostVideo() {
+    pickVideo(700 * 1024, async (dataUrl) => {
+      insertHTMLAtCursor('<video controls src="' + dataUrl + '"></video><p><br></p>');
+    });
   }
 
   async function viewThread(id) {
@@ -188,21 +279,23 @@
         + '<div class="reply-text">' + esc(r.body) + '</div></div></div>';
     }).join('');
     content.innerHTML =
-      '<div class="appbar"><button class="btn" id="backBtn">← 返回</button><h1 style="font-size:15px;">' + esc(t.board_name) + '</h1><span class="spacer"></span></div>'
+      '<div class="appbar"><button class="btn" id="backBtn">' + WI('chevronLeft', 18) + ' 返回</button><h1 style="font-size:15px;">' + esc(t.board_name) + '</h1><span class="spacer"></span></div>'
       + '<div class="content-inner">'
       + '<article class="post-detail"><span class="post-tag">' + esc(t.board_name) + '</span>'
       + '<h2 class="post-title">' + esc(t.title) + '</h2>'
       + '<div class="post-meta" style="margin-bottom:14px;">' + avatarHTML(a)
       + '<a class="name" href="#/user/' + esc(a.username || '') + '">' + esc(a.username || '匿名') + '</a>'
       + (a.level ? '<span class="lvl">Lv.' + a.level + '</span>' : '') + '<span class="dot"></span><span>' + esc(timeAgo(t.created_at)) + '</span>'
-      + '<span class="right"><span>回复 ' + (data.replies.length) + '</span><span>浏览 ' + t.views + '</span></span></div>'
-      + '<div class="post-body">' + esc(t.body) + '</div>'
+      + '<span class="right"><span><span class="meta-ico">' + WI('comment', 14) + '</span>回复 ' + (data.replies.length) + '</span>'
+      + '<span><span class="meta-ico">' + WI('eye', 14) + '</span>浏览 ' + t.views + '</span></span></div>'
+      + '<div class="post-body">' + renderBody(t.body) + '</div>'
       + '<div class="like-bar"><button class="like-btn' + (t.liked ? ' liked' : '') + '" id="likeBtn">'
-      + '<span class="heart">' + (t.liked ? '♥' : '♡') + '</span> <span id="likeCount">' + (t.likes || 0) + '</span> 赞</button></div>'
+      + WI(t.liked ? 'heartFill' : 'heart', 18)
+      + ' <span id="likeCount">' + (t.likes || 0) + '</span> 赞</button></div>'
       + '</article>'
-      + '<h3 style="font-size:14px;margin:22px 0 6px;color:#5b5b5b;">' + data.replies.length + ' 条回复</h3>'
+      + '<h3 style="font-size:14px;margin:22px 0 6px;color:var(--text-2);">' + data.replies.length + ' 条回复</h3>'
       + '<div class="replies" id="reps">' + (replies || '<div class="empty">还没有回复，来抢沙发</div>') + '</div>'
-      + (ME ? '<div class="reply-box"><input id="replyInput" placeholder="写下你的回复…" /><button class="btn primary" id="sendReply">发送</button></div>'
+      + (ME ? '<div class="reply-box"><input id="replyInput" placeholder="写下你的回复…" /><button class="btn primary" id="sendReply">' + WI('send', 16) + ' 发送</button></div>'
             : '<div class="muted" style="margin-top:14px;">登录后才能回复 · <a href="#" id="loginLink">去登录</a></div>')
       + '</div>';
     document.getElementById('backBtn').onclick = () => history.length > 1 ? history.back() : (location.hash = '#/home');
@@ -223,8 +316,7 @@
       try {
         const d = await api('/api/threads/' + id + '/like', { method: 'POST' });
         lb.classList.toggle('liked', d.liked);
-        lb.querySelector('.heart').textContent = d.liked ? '♥' : '♡';
-        document.getElementById('likeCount').textContent = d.likes;
+        lb.innerHTML = WI(d.liked ? 'heartFill' : 'heart', 18) + ' <span id="likeCount">' + d.likes + '</span> 赞';
       } catch (e) { alert(e.message); }
     };
   }
@@ -236,7 +328,7 @@
     const feed = (data.threads || []).map(threadCard).join('') || '<div class="empty">该用户还没发帖</div>';
     const cover = u.bg_image ? ' style="background-image:url(' + esc(u.bg_image) + ')"' : '';
     content.innerHTML =
-      '<div class="appbar"><button class="btn" id="backBtn">←</button><h1 style="font-size:15px;">' + esc(u.username) + ' 的主页</h1><span class="spacer"></span>' + (isSelf ? '<button class="btn" id="toMe">编辑资料</button>' : '') + '</div>'
+      '<div class="appbar"><button class="btn" id="backBtn">' + WI('chevronLeft', 18) + '</button><h1 style="font-size:15px;">' + esc(u.username) + ' 的主页</h1><span class="spacer"></span>' + (isSelf ? '<button class="btn" id="toMe">' + WI('edit', 16) + ' 编辑资料</button>' : '') + '</div>'
       + '<div class="content-inner"><div class="profile">'
       + '<div class="profile-cover"' + cover + '></div>'
       + '<div class="profile-main">'
@@ -244,7 +336,7 @@
       + avatarHTML({ username: u.username, avatar: u.avatar })
       + '<div class="profile-id"><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
       + '<div class="pm">' + esc(u.bio || DEFAULT_BIO) + '</div></div>'
-      + (isSelf ? '' : '<button class="btn follow-btn' + (u.is_following ? ' following' : '') + '" id="followBtn">' + (u.is_following ? '已关注' : '+ 关注') + '</button>')
+      + (isSelf ? '' : '<button class="btn follow-btn' + (u.is_following ? ' following' : '') + '" id="followBtn">' + WI('userAdd', 16) + ' ' + (u.is_following ? '已关注' : '关注') + '</button>')
       + '</div>'
       + '<div class="profile-stats">'
       + '<div class="pstat"><b>' + (data.threads ? data.threads.length : 0) + '</b><span>帖子</span></div>'
@@ -299,7 +391,7 @@
       + '<div class="bio-block" id="bioBlock"></div>'
       + '<h3 class="sec-title">我发的帖子</h3>'
       + '<div class="feed">' + feed + '</div>'
-      + '<div class="profile-actions"><button class="btn" id="logout">退出登录</button></div>'
+      + '<div class="profile-actions"><button class="btn" id="logout">' + WI('logout', 16) + ' 退出登录</button></div>'
       + '</div></div>';
 
     /* --- 个人简介：默认只读展示，双击进入编辑 --- */
@@ -391,6 +483,15 @@
 
   /* ===== 图片上传（转 base64 直接存 D1，无需 R2） ===== */
   // maxDim: 最长边像素上限；quality: JPEG 压缩质量（越小越省空间）
+  function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onerror = () => reject(new Error('读取文件失败'));
+      r.onload = () => resolve(r.result);
+      r.readAsDataURL(file);
+    });
+  }
+
   function pickImage(maxDim, quality, cb) {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = 'image/*';
@@ -400,6 +501,22 @@
         const dataUrl = await fileToDataURL(f, maxDim, quality);
         await cb(dataUrl);
       } catch (e) { alert(e.message || '图片处理失败'); }
+    };
+    inp.click();
+  }
+
+  // 视频：浏览器无法就地压缩，直接读成 base64 内嵌；D1 单值约 1MB 上限，故限制源文件大小。
+  function pickVideo(maxBytes, cb) {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'video/*';
+    inp.onclick = (e) => { e.stopPropagation(); };
+    inp.onchange = async () => {
+      const f = inp.files[0]; if (!f) return;
+      if (f.size > maxBytes) { alert('视频太大（需 < ' + Math.round(maxBytes / 1024) + 'KB）。D1 存储上限约 1MB，请压缩或截短后重试。'); return; }
+      try {
+        const dataUrl = await readFileAsDataURL(f);
+        await cb(dataUrl, f.type);
+      } catch (e) { alert(e.message || '视频处理失败'); }
     };
     inp.click();
   }
@@ -486,7 +603,6 @@
 
   /* ===== 启动 ===== */
   (async function init() {
-    await loadIcons();
     buildRail();
     try { SETTINGS = await api('/api/settings'); } catch (e) {}
     applyTheme();

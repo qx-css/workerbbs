@@ -62,6 +62,7 @@
   /* 横屏铺满：统计 4~6 列，表单两列并排 */
   .stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
   .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .stat-ico { color: var(--accent); margin-bottom: 8px; opacity: .92; }
   .stat b { display: block; font-size: 30px; line-height: 1.1; }
   .stat span { font-size: 12px; color: var(--text-2); }
   .cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
@@ -177,6 +178,7 @@
       </div>
     </div>
   </div>
+  <script src="/icons.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>

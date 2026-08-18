@@ -61,6 +61,14 @@ async function readJson(c: any): Promise<any> {
 function publicThread(t: any, extra: any = {}) {
   return { ...t, ...extra };
 }
+// 纵深防御：发帖正文允许携带 HTML（富文本），但先粗暴剥离脚本/事件属性等危险内容。
+// 真正的安全保障在前端渲染时（sanitizeHTML 白名单），这里只是降低存储风险。
+function stripDanger(s: string): string {
+  return s
+    .replace(/<\s*(script|style|iframe|object|embed|link|meta|base|form)[\s\S]*?(\/|>)/gi, '')
+    .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/javascript:/gi, '');
+}
 
 /* ============================================================
  *  公开 / 鉴权接口
@@ -219,10 +227,11 @@ app.post('/api/threads', async (c) => {
   const b = await readJson(c);
   const boardId = Number(b.board_id);
   const title = String(b.title || '').trim();
-  const body = String(b.body || '').trim();
+  const body = stripDanger(String(b.body || '')).trim();
   if (!boardId) return fail('请选择板块');
   if (title.length < 2) return fail('标题至少 2 个字符');
   if (body.length < 1) return fail('正文不能为空');
+  if (body.length > 950000) return fail('内容过大（含媒体超过 D1 约 1MB 上限），请压缩视频或缩短正文', 413);
   const board = await c.env.DB.prepare('SELECT id FROM boards WHERE id = ?').bind(boardId).first();
   if (!board) return fail('板块不存在');
   const id = await db.createThread(c.env.DB, { boardId, userId: u.id, title, body });

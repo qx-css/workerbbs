@@ -39,9 +39,9 @@
   /* ===== 概览 ===== */
   async function renderStats() {
     const s = await api('/api/admin/stats');
+    const map = [['person', '用户', s.users], ['comment', '帖子', s.threads], ['send', '回复', s.replies], ['logout', '已封禁', s.banned]];
     document.getElementById('stats').innerHTML =
-      [['用户', s.users], ['帖子', s.threads], ['回复', s.replies], ['已封禁', s.banned]]
-        .map((x) => '<div class="stat"><b>' + x[1] + '</b><span>' + x[0] + '</span></div>').join('');
+      map.map((x) => '<div class="stat"><div class="stat-ico">' + WI(x[0], 22) + '</div><b>' + x[2] + '</b><span>' + x[1] + '</span></div>').join('');
   }
 
   /* ===== 站点设置 ===== */
@@ -143,11 +143,26 @@
     inp.click();
   }
 
+  /* ===== WinUI 图标：侧栏 / 返回 / 旋转提示 ===== */
+  function enhanceIcons() {
+    const navIcons = { overview: 'home', site: 'settings', users: 'person', threads: 'comment' };
+    document.querySelectorAll('.snav').forEach((b) => {
+      const ic = navIcons[b.dataset.panel] || 'sparkle';
+      const label = b.textContent.trim();
+      b.innerHTML = WI(ic, 18) + ' <span>' + esc(label) + '</span>';
+    });
+    const back = document.querySelector('.foot a.btn');
+    if (back) back.innerHTML = WI('chevronLeft', 16) + ' 返回论坛';
+    const rot = document.querySelector('#rotate .ico');
+    if (rot) rot.innerHTML = WI('rotate', 40);
+  }
+
   /* ===== 启动 ===== */
   (async function init() {
     let me = null;
     try { me = (await api('/api/me')).user; } catch (e) { me = null; }
     if (!me || me.role !== 'admin') { location.replace('/'); return; }
+    enhanceIcons();
 
     try { SETTINGS = await api('/api/settings'); } catch (e) {}
     document.getElementById('brandName').textContent = SETTINGS.site_name || 'WorkerBBS';

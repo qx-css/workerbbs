@@ -220,6 +220,39 @@
   .post-meta .name:hover, .reply-head .name:hover, .avatar.clickable:hover { opacity: 0.85; }
   .muted { color:var(--text-2); font-size: 13px; }
 
+  /* ===== WinUI 图标 ===== */
+  .wic { display: inline-block; width: 20px; height: 20px; vertical-align: middle; flex: none; }
+  .meta-ico { display: inline-flex; vertical-align: middle; margin-right: 3px; opacity: 0.7; }
+
+  /* ===== 富文本编辑器 ===== */
+  .rte-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .rte-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+  .rte-btn { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--text); border-radius: 6px; cursor: pointer; transition: background var(--dur-fast) var(--ease-std), transform 83ms var(--ease-enter); }
+  .rte-btn:hover { background: var(--hover); }
+  .rte-btn:active { transform: scale(0.94); }
+  .rte-sep { width: 1px; height: 20px; background: var(--border); margin: 6px 4px; }
+  .rte { min-height: 220px; max-height: 60vh; overflow: auto; padding: 12px 14px; font-size: 14px; line-height: 1.7; color: var(--text); outline: none; }
+  .rte:empty:before { content: attr(data-placeholder); color: var(--text-2); }
+  .rte:focus { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
+  .rte img, .rte video { max-width: 100%; border-radius: 8px; margin: 4px 0; }
+  .rte blockquote { margin: 8px 0; padding: 6px 12px; border-left: 3px solid var(--accent); background: var(--surface-2); color: var(--text-2); border-radius: 0 8px 8px 0; }
+  .rte h2, .rte h3 { margin: 10px 0 6px; }
+  .rte a { color: var(--accent); }
+
+  /* 帖子正文里的富媒体 */
+  .post-body img { max-width: 100%; border-radius: 8px; margin: 8px 0; }
+  .post-body video { max-width: 100%; border-radius: 8px; margin: 8px 0; background: #000; display: block; }
+  .post-body blockquote { margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--accent); background: var(--surface-2); color: var(--text-2); border-radius: 0 8px 8px 0; }
+  .post-body h2, .post-body h3 { margin: 14px 0 6px; }
+  .post-body a { color: var(--accent); }
+  .post-body ul, .post-body ol { padding-left: 22px; margin: 8px 0; }
+  .post-body li { margin: 2px 0; }
+
+  .like-btn .wic { margin-right: 2px; }
+  .follow-btn .wic { margin-right: 4px; }
+  .btn .wic { margin-right: 4px; }
+
+
   /* ===== 深色模式 ===== */
   [data-theme="dark"] {
     --text: #f3f3f3;
@@ -247,6 +280,7 @@
   <nav class="rail" id="rail" aria-label="主导航"></nav>
   <main class="content" id="content"></main>
   <div id="modal-root"></div>
+  <script src="/icons.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
