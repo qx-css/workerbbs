@@ -42,6 +42,10 @@ export interface PluginContext {
   /** 给某用户加经验值（复用主站逻辑） */
   addExp(userId: number, amount: number): Promise<void>;
 
+  /** 通过 WebSocket 中继节点向所有在线客户端广播一条实时事件
+   *  （事件会出现在客户端的 window.WB 实时回调里，需前端配合监听） */
+  broadcast(type: string, payload: unknown): void | Promise<void>;
+
   /** 构造一个 JSON 响应（插件路由统一返回格式） */
   json(data: unknown, status?: number): Response;
 }

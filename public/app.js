@@ -109,11 +109,14 @@
       { n: 'home', label: '首页', view: '#/home' },
       { n: 'search', label: '发现', view: '#/discover' },
       { n: 'add', label: '发帖', view: '#/compose' },
+      { n: 'chat', label: '私信', view: '#/messages', badge: 'dm' },
       { n: 'person', label: '我的', view: '#/profile' },
     ];
     let html = '<button class="nav-toggle" data-label="菜单" aria-label="菜单">' + WI('navigation', 20) + '</button>';
     items.forEach((it) => {
-      html += '<button class="nav-item" data-label="' + it.label + '" data-view="' + it.view + '">' + WI(it.n, 20) + '</button>';
+      html += '<button class="nav-item" data-label="' + it.label + '" data-view="' + it.view + '">' + WI(it.n, 20);
+      if (it.badge) html += '<span class="nav-badge" id="' + it.badge + 'Badge" hidden></span>';
+      html += '</button>';
     });
     html += '<span class="spacer"></span>';
     html += '<button class="nav-item" data-label="设置" data-view="#/settings">' + WI('settings', 20) + '</button>';
@@ -432,7 +435,8 @@
       + avatarHTML({ username: u.username, avatar: u.avatar })
       + '<div class="profile-id"><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
       + '<div class="pm">' + esc(u.bio || DEFAULT_BIO) + '</div></div>'
-      + (isSelf ? '' : '<button class="btn follow-btn' + (u.is_following ? ' following' : '') + '" id="followBtn">' + WI('userAdd', 16) + ' ' + (u.is_following ? '已关注' : '关注') + '</button>')
+      + (isSelf ? '' : '<button class="btn follow-btn' + (u.is_following ? ' following' : '') + '" id="followBtn">' + WI('userAdd', 16) + ' ' + (u.is_following ? '已关注' : '关注') + '</button>'
+        + '<button class="btn" id="dmBtn">' + WI('chat', 16) + ' 发私信</button>')
       + '</div>'
       + '<div class="profile-stats">'
       + '<div class="pstat"><b>' + (data.threads ? data.threads.length : 0) + '</b><span>帖子</span></div>'
@@ -455,6 +459,8 @@
         if (stats[1]) stats[1].textContent = d.followers;
       } catch (e) { alert(e.message); }
     };
+    const dmb = document.getElementById('dmBtn');
+    if (dmb) dmb.onclick = () => (location.hash = '#/messages/' + encodeURIComponent(u.username));
   }
 
   async function viewProfile() {
@@ -540,7 +546,7 @@
     });
 
     document.getElementById('logout').onclick = async () => {
-      await api('/api/auth/logout', { method: 'POST' }); ME = null; if (wsSock) wsSock.close(); location.hash = '#/home'; router();
+      await api('/api/auth/logout', { method: 'POST' }); ME = null; if (wsSock) wsSock.close(); updateUnreadBadge(); location.hash = '#/home'; router();
     };
   }
 
@@ -571,7 +577,7 @@
     };
     document.getElementById('toProfile').onclick = () => (location.hash = '#/profile');
     document.getElementById('sLogout').onclick = async () => {
-      await api('/api/auth/logout', { method: 'POST' }); ME = null; if (wsSock) wsSock.close(); location.hash = '#/home'; router();
+      await api('/api/auth/logout', { method: 'POST' }); ME = null; if (wsSock) wsSock.close(); updateUnreadBadge(); location.hash = '#/home'; router();
     };
     const ta = document.getElementById('toAdmin');
     if (ta) ta.onclick = () => (location.href = '/admin');
@@ -699,7 +705,11 @@
     try {
       const s = new WebSocket(SETTINGS.ws_endpoint.replace(/\/$/, '') + '/ws');
       wsSock = s;
-      s.onopen = () => { wsRetry = 0; };
+      s.onopen = () => {
+        wsRetry = 0;
+        // 注册本会话归属的用户，用于 WebSocket 节点定向投递私信
+        try { s.send(JSON.stringify({ type: 'auth', userId: ME.id })); } catch {}
+      };
       s.onmessage = (ev) => {
         let m; try { m = JSON.parse(ev.data); } catch { return; }
         handleRealtime(m);
@@ -721,17 +731,110 @@
       }
     } else if (m.type === 'follow:new') {
       toast('<b>' + esc(p.follower || '') + '</b> ' + (p.is_following ? '关注了你' : '取消了关注'));
+    } else if (m.type === 'dm:new') {
+      // dm:new 经节点定向投递，只有收件人本机收到，必然是发给自己的
+      toast('💬 <b>' + esc(p.fromUsername || '有人') + '</b>：' + esc(p.body || ''));
+      updateUnreadBadge();
+      // 若正在看与对方的对话，自动刷新
+      if ((location.hash || '').startsWith('#/messages/')) {
+        const cur = decodeURIComponent((location.hash.split('/')[2] || ''));
+        if (cur === p.fromUsername) setTimeout(() => { try { viewConversation(p.fromUsername); } catch {} }, 500);
+      }
     }
   }
 
+  /* 拉取并刷新导航栏私信未读角标（轻量请求，不触发全局加载条） */
+  async function updateUnreadBadge() {
+    const b = document.getElementById('dmBadge');
+    if (!b) return;
+    if (!ME) { b.hidden = true; return; }
+    try {
+      const res = await fetch('/api/messages/unread', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const r = await res.json();
+      const n = (r.unread | 0);
+      if (n > 0) { b.textContent = n > 99 ? '99+' : String(n); b.hidden = false; }
+      else b.hidden = true;
+    } catch {}
+  }
+
+  /* ===== 私信（WebSocket 实时推送，REST 拉取历史） ===== */
+  function convRow(c) {
+    const lastTxt = c.last ? (c.last.from === ME.id ? '你：' : '') + c.last.body : '（暂无消息）';
+    return '<div class="conv-row" data-user="' + esc(c.peer_username) + '">'
+      + avatarHTML({ username: c.peer_username, avatar: c.peer_avatar })
+      + '<div class="conv-main"><div class="conv-top"><span class="conv-name">' + esc(c.peer_username) + '</span>'
+      + (c.last ? '<span class="conv-time">' + esc(timeAgo(c.last.created_at)) + '</span>' : '') + '</div>'
+      + '<div class="conv-bottom"><span class="conv-last">' + esc(htmlToText(lastTxt).slice(0, 60)) + '</span>'
+      + (c.unread ? '<span class="conv-unread">' + c.unread + '</span>' : '') + '</div></div></div>';
+  }
+  async function viewMessages() {
+    if (!ME) { openAuth(); return; }
+    content.innerHTML =
+      '<div class="appbar"><h1>私信</h1><span class="spacer"></span></div>'
+      + '<div class="content-inner"><div class="feed" id="convList"></div></div>';
+    const list = document.getElementById('convList');
+    try {
+      const r = await api('/api/messages');
+      if (!r.conversations.length) list.innerHTML = '<div class="empty">还没有私信，去用户主页点「发私信」开始聊天吧</div>';
+      else {
+        list.innerHTML = r.conversations.map(convRow).join('');
+        list.querySelectorAll('.conv-row').forEach((el) => {
+          el.onclick = () => (location.hash = '#/messages/' + encodeURIComponent(el.dataset.user));
+        });
+      }
+      updateUnreadBadge();
+    } catch (e) { list.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
+  }
+  function dmRow(m) {
+    const mine = m.from === (ME && ME.id);
+    const body = esc(m.body).replace(/\n/g, '<br>');
+    return '<div class="dm-row' + (mine ? ' mine' : '') + '"><div class="dm-bubble">' + body
+      + '</div><div class="dm-time">' + esc(timeAgo(m.created_at)) + '</div></div>';
+  }
+  async function viewConversation(username) {
+    if (!ME) { openAuth(); return; }
+    try {
+      const r = await api('/api/messages/' + encodeURIComponent(username));
+      const u = r.peer;
+      content.innerHTML =
+        '<div class="appbar"><button class="btn" id="backBtn">' + WI('chevronLeft', 18) + ' 私信</button>'
+        + '<h1 style="font-size:15px;">' + esc(u.username) + '</h1><span class="spacer"></span></div>'
+        + '<div class="content-inner">'
+        + '<div class="dm-thread" id="dmThread">' + (r.messages.map(dmRow).join('') || '<div class="empty">还没有消息，发一条打个招呼吧</div>') + '</div>'
+        + '<div class="dm-box"><input id="dmInput" placeholder="发私信给 ' + esc(u.username) + '…" maxlength="2000" autocomplete="off" />'
+        + '<button class="btn primary" id="dmSend">' + WI('send', 16) + ' 发送</button></div>'
+        + '<div class="err" id="dmErr"></div></div>';
+      const thread = document.getElementById('dmThread');
+      thread.scrollTop = thread.scrollHeight;
+      document.getElementById('backBtn').onclick = () => (location.hash = '#/messages');
+      const send = async () => {
+        const inp = document.getElementById('dmInput');
+        const txt = inp.value.trim();
+        if (!txt) return;
+        try {
+          await api('/api/messages', { method: 'POST', body: JSON.stringify({ to: username, text: txt }) });
+          inp.value = '';
+          viewConversation(username);
+        } catch (e) { document.getElementById('dmErr').textContent = e.message; }
+      };
+      document.getElementById('dmSend').onclick = send;
+      const inp = document.getElementById('dmInput');
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+      inp.focus();
+      updateUnreadBadge();
+    } catch (e) { content.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
+  }
+
   /* ===== 路由 ===== */
-  const routes = { '#/home': viewHome, '#/discover': viewDiscover, '#/compose': viewCompose, '#/profile': viewProfile, '#/settings': viewSettings };
+  const routes = { '#/home': viewHome, '#/discover': viewDiscover, '#/compose': viewCompose, '#/profile': viewProfile, '#/settings': viewSettings, '#/messages': viewMessages };
   async function router() {
     let hash = location.hash || '#/home';
     setActive(hash.split('/').slice(0, 2).join('/'));
     beginLoad();
     try {
       if (hash.startsWith('#/thread/')) return viewThread(hash.split('/')[2]);
+      if (hash.startsWith('#/messages/')) return viewConversation(decodeURIComponent(hash.split('/')[2]));
       if (hash.startsWith('#/user/')) return viewUser(hash.split('/')[2]);
       if (hash.startsWith('#/verify/')) return viewVerify(hash.split('/')[2]);
       if (hash.startsWith('#/search')) return viewSearch();
@@ -811,7 +914,7 @@
     applyTheme();
     try { BOARDS = (await api('/api/boards')).boards; } catch (e) {}
     try { const d = await api('/api/me'); ME = d.user; } catch (e) { ME = null; }
-    if (ME) connectRealtime();
+    if (ME) { connectRealtime(); updateUnreadBadge(); }
     router();
   })();
 })();

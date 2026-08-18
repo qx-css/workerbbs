@@ -9,6 +9,7 @@
 import * as db from '../db';
 import type { ForumHookEvent, ForumPlugin, PluginContext } from './types';
 import { checkinPlugin } from './builtin/checkin';
+import { broadcastWS } from '../realtime';
 
 /** 所有内置插件在此登记 */
 const registry: ForumPlugin[] = [checkinPlugin];
@@ -58,6 +59,7 @@ export function registerPlugins(app: any): void {
       kvGet: (key, fallback = '') => db.getPluginKv(RUNTIME_ENV.DB, p.id, key, fallback),
       kvSet: (key, value) => db.setPluginKv(RUNTIME_ENV.DB, p.id, key, value),
       addExp: (userId, amount) => db.addExp(RUNTIME_ENV.DB, userId, amount),
+      broadcast: (type, payload) => broadcastWS(RUNTIME_ENV, type, payload),
       json: (data, status = 200) =>
         new Response(JSON.stringify(data), {
           status,

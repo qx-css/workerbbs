@@ -4,6 +4,7 @@ import * as db from './db';
 import { hashPassword, verifyPassword } from './auth';
 import { unzipSync, strFromU8 } from 'fflate';
 import { registerPlugins, runHook, captureEnv, syncPluginsToDb, flushPluginCache } from './plugins';
+import { broadcastWS } from './realtime';
 
 type AppEnv = { Bindings: Bindings; Variables: { user: User | null } };
 const app = new Hono<AppEnv>();
@@ -133,23 +134,8 @@ async function sendVerificationEmail(c: any, email: string, token: string) {
   return resendSend(c, email, '验证你的 ' + site + ' 邮箱', html);
 }
 
-/* ---------- 实时同步（WebSocket 中继节点） ---------- */
-// 主仓库只需配置 ws_endpoint（节点地址）。
-// 事件经节点的 /broadcast 接口推送给所有在线客户端。未配置则静默跳过。
-async function broadcastWS(c: any, type: string, payload: unknown): Promise<void> {
-  const endpoint = await db.getSetting(c.env.DB, 'ws_endpoint');
-  if (!endpoint) return;
-  try {
-    const url = endpoint.replace(/^wss?:\/\//, 'https://').replace(/\/+$/, '') + '/broadcast';
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, payload }),
-    });
-  } catch {
-    /* 实时同步失败不影响主流程 */
-  }
-}
+// 实时同步的 broadcastWS 已抽到 ./realtime 模块（供主流程与插件框架共用，避免循环依赖）。
+// 调用形如 broadcastWS(c.env, type, payload) 或带定向投递 broadcastWS(c.env, type, payload, toUserId)。
 
 // 当前用户
 app.get('/api/me', async (c) => {
@@ -340,7 +326,7 @@ app.post('/api/threads/:id/like', async (c) => {
     await db.addExp(c.env.DB, me.id, 1); // 点赞者 +1 经验
   }
   const likes = await db.countLikes(c.env.DB, 'thread', id);
-  await broadcastWS(c, 'like:new', { threadId: id, likes, liked: !now });
+  await broadcastWS(c.env, 'like:new', { threadId: id, likes, liked: !now });
   await runHook('thread:liked', c, { threadId: id, liked: !now, byUserId: me.id, userId: t.user_id });
   return ok({ liked: !now, likes });
 });
@@ -360,7 +346,7 @@ app.post('/api/threads', async (c) => {
   if (!board) return fail('板块不存在');
   const id = await db.createThread(c.env.DB, { boardId, userId: u.id, title, body });
   await db.addExp(c.env.DB, u.id, 10); // 发帖 +10 经验
-  await broadcastWS(c, 'thread:new', { id, title, boardId, author: u.username });
+  await broadcastWS(c.env, 'thread:new', { id, title, boardId, author: u.username });
   await runHook('thread:created', c, { threadId: id, title, boardId, author: u.username, userId: u.id });
   return ok({ id }, 201);
 });
@@ -390,7 +376,7 @@ app.post('/api/threads/:id/replies', async (c) => {
   if (body.length < 1) return fail('回复内容不能为空');
   await db.createReply(c.env.DB, { threadId: id, userId: u.id, body });
   await db.addExp(c.env.DB, u.id, 5); // 回复 +5 经验
-  await broadcastWS(c, 'reply:new', { threadId: id, author: u.username });
+  await broadcastWS(c.env, 'reply:new', { threadId: id, author: u.username });
   await runHook('reply:created', c, { threadId: id, author: u.username, userId: u.id });
   return ok({ ok: true }, 201);
 });
@@ -428,7 +414,7 @@ app.post('/api/users/:username/follow', async (c) => {
   const now = await db.isFollowing(c.env.DB, me.id, target.id);
   if (now) await db.unfollow(c.env.DB, me.id, target.id);
   else await db.follow(c.env.DB, me.id, target.id);
-  await broadcastWS(c, 'follow:new', { follower: me.username, target: target.username, is_following: !now });
+  await broadcastWS(c.env, 'follow:new', { follower: me.username, target: target.username, is_following: !now });
   await runHook('user:followed', c, { followerId: me.id, targetId: target.id, is_following: !now });
   return ok({ is_following: !now, followers: await db.countFollowers(c.env.DB, target.id) });
 });
@@ -456,6 +442,72 @@ app.patch('/api/me', async (c) => {
 // 图片（头像 / 背景图）以 base64 data URL 直接存进 D1，不依赖 R2。
 // 上传由前端把图片转成 data URL 后通过 PATCH /api/me 或 POST /api/admin/settings 写入，
 // toPublicUser 会把该 data URL 原样返回，前端直接作为 <img src> 渲染。
+
+/* ============================================================
+ *  私信（Direct Message）
+ * ============================================================ */
+
+// 发私信（实时推送给收件人，经 WebSocket 节点定向投递）
+app.post('/api/messages', async (c) => {
+  const me = user(c);
+  if (!me) return fail('请先登录', 401);
+  const b = await readJson(c);
+  const text = typeof b.text === 'string' ? b.text.trim() : '';
+  if (!text) return fail('私信内容不能为空');
+  if (text.length > 2000) return fail('私信内容过长（上限 2000 字）');
+  const toRaw = String(b.to || '').trim();
+  if (!toRaw) return fail('请指定收件人');
+  const to = /^\d+$/.test(toRaw) ? await db.getUserById(c.env.DB, Number(toRaw)) : await db.getUserByUsername(c.env.DB, toRaw);
+  if (!to) return fail('收件人不存在', 404);
+  if (to.id === me.id) return fail('不能给自己发私信');
+  const id = await db.createMessage(c.env.DB, { from: me.id, to: to.id, body: text });
+  const msg = await db.getMessage(c.env.DB, id);
+  await broadcastWS(c.env, 'dm:new', {
+    id, from: me.id, fromUsername: me.username, to: to.id, body: text, created_at: msg.created_at,
+  }, to.id);
+  return ok({ ok: true, message: { id, from: me.id, to: to.id, body: text, created_at: msg.created_at } }, 201);
+});
+
+// 会话列表（每个对方取最后一条 + 未读数）
+app.get('/api/messages', async (c) => {
+  const me = user(c);
+  if (!me) return fail('请先登录', 401);
+  const convs = await db.listConversations(c.env.DB, me.id);
+  const users = await db.getUsersByIds(c.env.DB, convs.map((x) => x.peer));
+  const list = await Promise.all(convs.map(async (x) => {
+    const u = users[x.peer] || null;
+    const last = await db.getMessage(c.env.DB, x.last_id);
+    return {
+      peer: x.peer,
+      peer_username: u ? u.username : '未知用户',
+      peer_avatar: u ? u.avatar : '',
+      unread: x.unread,
+      last: last ? { id: last.id, body: last.body, from: last.from_user, created_at: last.created_at } : null,
+    };
+  }));
+  return ok({ conversations: list });
+});
+
+// 未读总数（导航角标用）
+app.get('/api/messages/unread', async (c) => {
+  const me = user(c);
+  if (!me) return fail('请先登录', 401);
+  return ok({ unread: await db.countUnreadMessages(c.env.DB, me.id) });
+});
+
+// 与某用户的对话（按用户名，读取即标记已读）
+app.get('/api/messages/:peer', async (c) => {
+  const me = user(c);
+  if (!me) return fail('请先登录', 401);
+  const peer = await db.getUserByUsername(c.env.DB, c.req.param('peer'));
+  if (!peer) return fail('用户不存在', 404);
+  const msgs = await db.getConversation(c.env.DB, me.id, peer.id);
+  await db.markConversationRead(c.env.DB, me.id, peer.id);
+  return ok({
+    peer: db.toPublicUser(peer),
+    messages: msgs.map((m) => ({ id: m.id, from: m.from_user, to: m.to_user, body: m.body, created_at: m.created_at })),
+  });
+});
 
 /* ============================================================
  *  后台管理（仅管理员）

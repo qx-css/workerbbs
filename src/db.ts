@@ -324,6 +324,56 @@ export async function countLikes(db: D1Database, targetType: 'thread' | 'reply',
   return r ? r.c : 0;
 }
 
+/* ============ 私信 ============ */
+
+/** 会话列表：与当前用户有过私信往来的每个对方，取最后一条消息 id 与未读数 */
+export async function listConversations(db: D1Database, userId: number): Promise<{ peer: number; last_id: number; unread: number }[]> {
+  const rows = (await db
+    .prepare(
+      `SELECT
+         CASE WHEN from_user = ? THEN to_user ELSE from_user END AS peer,
+         MAX(id) AS last_id,
+         SUM(CASE WHEN to_user = ? AND "read" = 0 THEN 1 ELSE 0 END) AS unread
+       FROM messages WHERE from_user = ? OR to_user = ?
+       GROUP BY peer ORDER BY last_id DESC`
+    )
+    .bind(userId, userId, userId, userId)
+    .all()).results as unknown as { peer: number; last_id: number; unread: number }[];
+  return rows;
+}
+
+export async function getMessage(db: D1Database, id: number): Promise<any> {
+  return db.prepare('SELECT * FROM messages WHERE id = ?').bind(id).first();
+}
+
+/** 两用户之间的全部私信（按时间正序） */
+export async function getConversation(db: D1Database, userId: number, peerId: number): Promise<any[]> {
+  return (await db
+    .prepare('SELECT * FROM messages WHERE (from_user = ? AND to_user = ?) OR (from_user = ? AND to_user = ?) ORDER BY id ASC')
+    .bind(userId, peerId, peerId, userId)
+    .all()).results as unknown as any[];
+}
+
+export async function createMessage(db: D1Database, data: { from: number; to: number; body: string }): Promise<number> {
+  const info = await db
+    .prepare('INSERT INTO messages (from_user, to_user, body, "read", created_at) VALUES (?, ?, ?, 0, ?)')
+    .bind(data.from, data.to, data.body, Date.now())
+    .run();
+  return Number(info.meta.last_row_id);
+}
+
+export async function markConversationRead(db: D1Database, userId: number, peerId: number): Promise<void> {
+  await db
+    .prepare('UPDATE messages SET "read" = 1 WHERE to_user = ? AND from_user = ? AND "read" = 0')
+    .bind(userId, peerId)
+    .run();
+}
+
+export async function countUnreadMessages(db: D1Database, userId: number): Promise<number> {
+  const r = await db.prepare('SELECT COUNT(*) c FROM messages WHERE to_user = ? AND "read" = 0').bind(userId).first<{ c: number }>();
+  return r ? r.c : 0;
+}
+
 /* ============ 插件 ============ */
 
 export interface PluginRow {

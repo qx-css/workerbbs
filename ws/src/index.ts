@@ -12,6 +12,7 @@
 interface Session {
   ws: WebSocket;
   channel: string;
+  userId?: number; // 客户端连接后通过 {type:'auth',userId} 注册，用于私信定向投递
 }
 
 // 以普通类实现 Durable Object（只要有 fetch 方法即可被绑定调用）
@@ -27,12 +28,13 @@ export class Relay {
     const url = new URL(request.url);
     const channel = (this.env.USER_ID as string) || 'global';
 
-    // 1) 广播接口（主仓库调用，用于把事件推给所有在线客户端）
+    // 1) 广播接口（主仓库调用，用于把事件推给在线客户端）
+    //    body.to 指定用户 id 时，仅投递给该用户的会话；否则全员广播。
     if (url.pathname === '/broadcast') {
       let body: any = {};
       try { body = await request.json(); } catch { return new Response('bad json', { status: 400 }); }
-      const ch = (typeof body.channel === 'string' && body.channel) || channel;
-      this.broadcast(ch, JSON.stringify({ type: body.type, payload: body.payload }));
+      const to = (typeof body.to === 'number') ? body.to : undefined;
+      this.broadcast(JSON.stringify({ type: body.type, payload: body.payload }), to);
       return new Response('ok');
     }
 
@@ -47,15 +49,25 @@ export class Relay {
     this.sessions.set(id, { ws: server, channel });
     server.accept();
     const cleanup = () => this.sessions.delete(id);
-    server.addEventListener('message', () => { /* 客户端 -> 服务端消息在此处理（可扩展） */ });
+    // 客户端 -> 服务端：目前用于注册 userId（私信定向投递所需）
+    server.addEventListener('message', (ev: any) => {
+      try {
+        const m = JSON.parse(ev.data);
+        if (m && m.type === 'auth' && typeof m.userId === 'number') {
+          const sess = this.sessions.get(id);
+          if (sess) sess.userId = m.userId;
+        }
+      } catch { /* 忽略非法消息 */ }
+    });
     server.addEventListener('close', cleanup);
     server.addEventListener('error', cleanup);
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  broadcast(channel: string, msg: string) {
+  // to 未指定 → 投递全部会话；指定 → 仅投递 userId === to 的会话
+  broadcast(msg: string, to?: number) {
     for (const [id, s] of this.sessions) {
-      if (s.channel !== channel) continue;
+      if (to !== undefined && s.userId !== to) continue;
       try { s.ws.send(msg); } catch { this.sessions.delete(id); }
     }
   }
