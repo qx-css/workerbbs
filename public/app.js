@@ -255,7 +255,7 @@
       else if (cmd === 'heading') document.execCommand('formatBlock', false, 'H3');
       else if (cmd === 'quote') document.execCommand('formatBlock', false, 'BLOCKQUOTE');
       else if (cmd === 'link') { const url = prompt('链接地址（以 http/https 开头）'); if (url) document.execCommand('createLink', false, url); }
-      else if (act === 'image') insertPostImage();
+      else if (cmd === 'image') insertPostImage();
       else if (act === 'video') insertPostVideo();
     });
 
