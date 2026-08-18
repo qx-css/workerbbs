@@ -29,6 +29,10 @@ export interface PublicUser {
   bg_image: string;
   banned: number;
   created_at: number;
+  followers?: number;
+  following?: number;
+  likes?: number;
+  is_following?: boolean;
 }
 
 export interface Board {

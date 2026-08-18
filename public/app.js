@@ -13,8 +13,8 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const avatarHTML = (u) =>
     u && u.avatar
-      ? '<span class="avatar"><img src="' + esc(u.avatar) + '" alt=""></span>'
-      : '<span class="avatar">' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
+      ? '<span class="avatar clickable" data-user="' + esc(u.username) + '"><img src="' + esc(u.avatar) + '" alt=""></span>'
+      : '<span class="avatar clickable" data-user="' + esc(u ? u.username : '') + '">' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
 
   async function api(path, opts) {
     opts = opts || {};
@@ -75,7 +75,11 @@
   function applyTheme() {
     document.documentElement.style.setProperty('--accent', SETTINGS.site_accent || '#0f6cbd');
     if (SETTINGS.site_bg) bg.style.backgroundImage = 'url(' + SETTINGS.site_bg + ')';
+    else bg.style.backgroundImage = '';
     document.title = SETTINGS.site_name || 'WorkerBBS';
+    // 深色模式：持久化在 localStorage（个人偏好，与站点主题色无关）
+    const theme = localStorage.getItem('theme') || 'light';
+    document.documentElement.dataset.theme = theme;
   }
 
   function loginBtn() { return '<button class="btn primary" id="loginBtn">登录</button>'; }
@@ -89,15 +93,27 @@
       + '<p class="post-snippet">' + esc(t.body) + '</p>'
       + '<div class="post-meta">'
       + avatarHTML(a)
-      + '<span class="name">' + esc(a.username || '匿名') + '</span>'
+      + '<span class="name" data-user="' + esc(a.username || '') + '">' + esc(a.username || '匿名') + '</span>'
       + (a.level ? '<span class="lvl">Lv.' + a.level + '</span>' : '')
       + '<span class="dot"></span><span>' + esc(timeAgo(t.created_at)) + '</span>'
       + '<span class="right"><span>回复 ' + (t.reply_count || 0) + '</span><span>浏览 ' + t.views + '</span></span>'
       + '</div></article>';
   }
 
-  // 全局委托：点击帖子卡片 → 详情
+  // 全局委托：点击头像 → 进入该用户主页（优先于帖子卡片跳转）
   content.addEventListener('click', (e) => {
+    const av = e.target.closest('.avatar.clickable');
+    if (av && av.dataset.user) {
+      e.preventDefault(); e.stopPropagation();
+      location.hash = '#/user/' + encodeURIComponent(av.dataset.user);
+      return;
+    }
+    const nm = e.target.closest('[data-user]');
+    if (nm && nm.dataset.user && !nm.classList.contains('avatar')) {
+      e.preventDefault(); e.stopPropagation();
+      location.hash = '#/user/' + encodeURIComponent(nm.dataset.user);
+      return;
+    }
     const card = e.target.closest('.post-card');
     if (card) { location.hash = '#/thread/' + card.dataset.id; }
   });
@@ -161,7 +177,7 @@
     const replies = data.replies.map((r) => {
       const ra = r.author || {};
       return '<div class="reply-card">' + avatarHTML(ra)
-        + '<div class="reply-main"><div class="reply-head"><span class="name">' + esc(ra.username || '匿名') + '</span>'
+        + '<div class="reply-main"><div class="reply-head"><span class="name" data-user="' + esc(ra.username || '') + '">' + esc(ra.username || '匿名') + '</span>'
         + (ra.level ? '<span class="lvl">Lv.' + ra.level + '</span>' : '') + '<span class="dot"></span><span>' + esc(timeAgo(r.created_at)) + '</span></div>'
         + '<div class="reply-text">' + esc(r.body) + '</div></div></div>';
     }).join('');
@@ -174,7 +190,10 @@
       + '<a class="name" href="#/user/' + esc(a.username || '') + '">' + esc(a.username || '匿名') + '</a>'
       + (a.level ? '<span class="lvl">Lv.' + a.level + '</span>' : '') + '<span class="dot"></span><span>' + esc(timeAgo(t.created_at)) + '</span>'
       + '<span class="right"><span>回复 ' + (data.replies.length) + '</span><span>浏览 ' + t.views + '</span></span></div>'
-      + '<div class="post-body">' + esc(t.body) + '</div></article>'
+      + '<div class="post-body">' + esc(t.body) + '</div>'
+      + '<div class="like-bar"><button class="like-btn' + (t.liked ? ' liked' : '') + '" id="likeBtn">'
+      + '<span class="heart">' + (t.liked ? '♥' : '♡') + '</span> <span id="likeCount">' + (t.likes || 0) + '</span> 赞</button></div>'
+      + '</article>'
       + '<h3 style="font-size:14px;margin:22px 0 6px;color:#5b5b5b;">' + data.replies.length + ' 条回复</h3>'
       + '<div class="replies" id="reps">' + (replies || '<div class="empty">还没有回复，来抢沙发</div>') + '</div>'
       + (ME ? '<div class="reply-box"><input id="replyInput" placeholder="写下你的回复…" /><button class="btn primary" id="sendReply">发送</button></div>'
@@ -192,38 +211,88 @@
         viewThread(id);
       } catch (e) { alert(e.message); }
     };
+    const lb = document.getElementById('likeBtn');
+    if (lb) lb.onclick = async () => {
+      if (!ME) { openAuth(); return; }
+      try {
+        const d = await api('/api/threads/' + id + '/like', { method: 'POST' });
+        lb.classList.toggle('liked', d.liked);
+        lb.querySelector('.heart').textContent = d.liked ? '♥' : '♡';
+        document.getElementById('likeCount').textContent = d.likes;
+      } catch (e) { alert(e.message); }
+    };
   }
 
   async function viewUser(username) {
     const data = await api('/api/users/' + encodeURIComponent(username));
     const u = data.user;
+    const isSelf = ME && ME.username === u.username;
     const feed = (data.threads || []).map(threadCard).join('') || '<div class="empty">该用户还没发帖</div>';
+    const cover = u.bg_image ? ' style="background-image:url(' + esc(u.bg_image) + ')"' : '';
     content.innerHTML =
-      '<div class="appbar"><h1>用户</h1></div><div class="content-inner">'
-      + '<div class="profile-head">' + avatarHTML(u)
-      + '<div><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
-      + '<div class="pm">' + esc(u.bio || '这个人很神秘') + '</div></div></div>'
-      + '<div class="feed">' + feed + '</div></div>';
+      '<div class="appbar"><button class="btn" id="backBtn">←</button><h1 style="font-size:15px;">' + esc(u.username) + ' 的主页</h1><span class="spacer"></span>' + (isSelf ? '<button class="btn" id="toMe">编辑资料</button>' : '') + '</div>'
+      + '<div class="content-inner"><div class="profile">'
+      + '<div class="profile-cover"' + cover + '></div>'
+      + '<div class="profile-main">'
+      + '<div class="profile-top">'
+      + avatarHTML({ username: u.username, avatar: u.avatar })
+      + '<div class="profile-id"><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
+      + '<div class="pm">' + esc(u.bio || '这个人很神秘') + '</div></div>'
+      + (isSelf ? '' : '<button class="btn follow-btn' + (u.is_following ? ' following' : '') + '" id="followBtn">' + (u.is_following ? '已关注' : '+ 关注') + '</button>')
+      + '</div>'
+      + '<div class="profile-stats">'
+      + '<div class="pstat"><b>' + (data.threads ? data.threads.length : 0) + '</b><span>帖子</span></div>'
+      + '<div class="pstat"><b>' + (u.followers || 0) + '</b><span>粉丝</span></div>'
+      + '<div class="pstat"><b>' + (u.following || 0) + '</b><span>关注</span></div>'
+      + '<div class="pstat"><b>' + (u.likes || 0) + '</b><span>获赞</span></div>'
+      + '</div>'
+      + '<h3 class="sec-title">帖子</h3>'
+      + '<div class="feed">' + feed + '</div>'
+      + '</div></div>';
+    const bb = document.getElementById('backBtn'); if (bb) bb.onclick = () => history.length > 1 ? history.back() : (location.hash = '#/home');
+    const tm = document.getElementById('toMe'); if (tm) tm.onclick = () => (location.hash = '#/profile');
+    const fb = document.getElementById('followBtn');
+    if (fb) fb.onclick = async () => {
+      try {
+        const d = await api('/api/users/' + encodeURIComponent(username) + '/follow', { method: 'POST' });
+        fb.classList.toggle('following', d.is_following);
+        fb.textContent = d.is_following ? '已关注' : '+ 关注';
+        const stats = fb.closest('.profile').querySelectorAll('.profile-stats .pstat b');
+        if (stats[1]) stats[1].textContent = d.followers;
+      } catch (e) { alert(e.message); }
+    };
   }
 
   async function viewProfile() {
     if (!ME) { openAuth(); return; }
     const u = ME;
-    content.innerHTML =
-      '<div class="appbar"><h1>我的</h1></div><div class="content-inner">'
-      + '<div class="profile-head">' + avatarHTML(u)
-      + '<div><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
-      + '<div class="pm">经验 ' + u.exp + ' · ' + esc(u.role === 'admin' ? '管理员' : '会员') + '</div></div></div>'
-      + '<div class="profile-actions">'
-      + '<button class="btn" id="upAvatar">上传头像</button>'
-      + '<button class="btn" id="upBg">上传背景图</button>'
-      + '<button class="btn" id="logout">退出登录</button></div>'
-      + '<label>个人简介</label><textarea id="bio" class="compose" style="width:100%;min-height:80px;padding:9px 11px;border:1px solid var(--rail-border);border-radius:6px;font:inherit;">' + esc(u.bio) + '</textarea>'
-      + '<div class="row" style="display:flex;gap:10px;margin-top:12px;"><button class="btn primary" id="saveProfile">保存资料</button><span class="muted" id="pMsg"></span></div>'
-      + '<h3 style="margin-top:22px;font-size:14px;color:#5b5b5b;">我发的帖子</h3>'
-      + '<div class="feed" id="myThreads"></div></div>';
     const my = await api('/api/users/' + encodeURIComponent(u.username));
-    document.getElementById('myThreads').innerHTML = (my.threads || []).map(threadCard).join('') || '<div class="empty">还没有发帖</div>';
+    const mu = my.user;
+    const feed = (my.threads || []).map(threadCard).join('') || '<div class="empty">还没有发帖</div>';
+    const cover = u.bg_image ? ' style="background-image:url(' + esc(u.bg_image) + ')"' : '';
+    content.innerHTML =
+      '<div class="appbar"><h1>我的</h1></div><div class="content-inner"><div class="profile">'
+      + '<div class="profile-cover"' + cover + '>'
+      + '<div class="cover-actions"><button class="btn" id="upBg">换封面</button></div></div>'
+      + '<div class="profile-main">'
+      + '<div class="profile-top">'
+      + avatarHTML({ username: u.username, avatar: u.avatar })
+      + '<div class="profile-id"><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
+      + '<div class="pm">经验 ' + u.exp + ' · ' + esc(u.role === 'admin' ? '管理员' : '会员') + '</div></div>'
+      + '<button class="btn" id="upAvatar">换头像</button>'
+      + '</div>'
+      + '<div class="profile-stats">'
+      + '<div class="pstat"><b>' + (my.threads ? my.threads.length : 0) + '</b><span>帖子</span></div>'
+      + '<div class="pstat"><b>' + (mu.followers || 0) + '</b><span>粉丝</span></div>'
+      + '<div class="pstat"><b>' + (mu.following || 0) + '</b><span>关注</span></div>'
+      + '<div class="pstat"><b>' + (mu.likes || 0) + '</b><span>获赞</span></div>'
+      + '</div>'
+      + '<div class="profile-edit"><label>个人简介</label><textarea id="bio" class="compose" style="width:100%;min-height:80px;padding:9px 11px;border:1px solid var(--rail-border);border-radius:6px;font:inherit;">' + esc(u.bio) + '</textarea>'
+      + '<div class="row" style="display:flex;gap:10px;margin-top:12px;"><button class="btn primary" id="saveProfile">保存资料</button><span class="muted" id="pMsg"></span></div></div>'
+      + '<h3 class="sec-title">我发的帖子</h3>'
+      + '<div class="feed">' + feed + '</div>'
+      + '<div class="profile-actions"><button class="btn" id="logout">退出登录</button></div>'
+      + '</div></div>';
 
     document.getElementById('upAvatar').onclick = () => pickImage(256, 0.85, async (dataUrl) => {
       await api('/api/me', { method: 'PATCH', body: JSON.stringify({ avatar: dataUrl }) }); await refreshMe(); viewProfile();
@@ -244,47 +313,56 @@
 
   async function viewSettings() {
     if (!ME) { openAuth(); return; }
-    if (ME.role !== 'admin') {
-      content.innerHTML =
-        '<div class="appbar"><h1>设置</h1></div><div class="content-inner">'
-        + '<div class="settings-row"><div><div style="font-weight:600;">账号</div><div class="muted">' + esc(ME.username) + '</div></div>'
-        + '<button class="btn" id="toProfile">我的资料</button></div>'
-        + '<div class="settings-row"><div>主题色由站点管理员统一设置</div><span class="tag">普通用户</span></div>'
-        + '</div>';
-      document.getElementById('toProfile').onclick = () => (location.hash = '#/profile');
-      return;
-    }
-    // 管理员后台
-    const stats = await api('/api/admin/stats');
+    const isAdmin = ME.role === 'admin';
+    // 所有用户都先看到「个人偏好」（深色模式等），管理员再追加站点管理面板
     content.innerHTML =
-      '<div class="appbar"><h1>后台管理</h1></div><div class="content-inner">'
-      + '<div class="stats">'
-      + '<div class="stat"><b>' + stats.users + '</b><span>用户</span></div>'
-      + '<div class="stat"><b>' + stats.threads + '</b><span>帖子</span></div>'
-      + '<div class="stat"><b>' + stats.replies + '</b><span>回复</span></div>'
-      + '<div class="stat"><b>' + stats.banned + '</b><span>已封禁</span></div></div>'
-      + '<h3 style="margin-top:24px;font-size:14px;color:#5b5b5b;">站点设置</h3>'
-      + '<div class="settings-row"><div><label>站点名称</label><input id="sName" value="' + esc(SETTINGS.site_name) + '"></div></div>'
-      + '<div class="settings-row"><div><label>站点简介</label><input id="sDesc" value="' + esc(SETTINGS.site_desc) + '"></div></div>'
-      + '<div class="settings-row"><div><label>强调色 (hex)</label><input id="sAccent" value="' + esc(SETTINGS.site_accent) + '"></div>'
-      + '<div class="swatches" id="sw">' + ['#0f6cbd', '#6161e6', '#0e700e', '#b8135b', '#c23500', '#5a2da4'].map((c) => '<span class="swatch" data-c="' + c + '" style="background:' + c + '"></span>').join('') + '</div></div>'
-      + '<div class="settings-row"><div><label>背景图 (上传)</label><button class="btn" id="sBg">上传背景图</button></div>'
-      + '<button class="btn primary" id="saveSite">保存站点设置</button></div>'
-      + '<h3 style="margin-top:24px;font-size:14px;color:#5b5b5b;">用户管理</h3><div id="userAdmin"></div>'
-      + '<h3 style="margin-top:24px;font-size:14px;color:#5b5b5b;">帖子管理</h3><div id="threadAdmin"></div>'
+      '<div class="appbar"><h1>设置</h1></div><div class="content-inner">'
+      + '<h3 class="sec-title">个人偏好</h3>'
+      + '<div class="settings-row"><div><div style="font-weight:600;">深色模式</div><div class="muted">切换浅色 / 深色界面（仅对本机生效）</div></div>'
+      + '<label class="switch"><input type="checkbox" id="themeToggle"' + (localStorage.getItem('theme') === 'dark' ? ' checked' : '') + '><span class="slider"></span></label></div>'
+      + '<div class="settings-row"><div><div style="font-weight:600;">账号</div><div class="muted">' + esc(ME.username) + '</div></div>'
+      + '<button class="btn" id="toProfile">我的资料</button></div>'
+      + (isAdmin ? '' : '<div class="settings-row"><div>主题色由站点管理员统一设置</div><span class="tag">普通用户</span></div>')
       + '</div>';
-    document.querySelectorAll('#sw .swatch').forEach((s) => s.onclick = () => (document.getElementById('sAccent').value = s.dataset.c));
-    document.getElementById('sBg').onclick = () => pickImage(1920, 0.75, async (dataUrl) => { document.getElementById('sBg').dataset.data = dataUrl; document.getElementById('sBg').textContent = '已选背景，保存生效'; });
-    document.getElementById('saveSite').onclick = async () => {
-      const payload = { site_name: document.getElementById('sName').value, site_desc: document.getElementById('sDesc').value, site_accent: document.getElementById('sAccent').value };
-      const bgData = document.getElementById('sBg').dataset.data;
-      if (bgData) payload.site_bg = bgData;
-      await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
-      SETTINGS = await api('/api/settings'); applyTheme();
-      alert('站点设置已保存');
+    document.getElementById('themeToggle').onchange = (e) => {
+      const t = e.target.checked ? 'dark' : 'light';
+      localStorage.setItem('theme', t);
+      document.documentElement.dataset.theme = t;
     };
-    renderUserAdmin();
-    renderThreadAdmin();
+    document.getElementById('toProfile').onclick = () => (location.hash = '#/profile');
+
+    if (isAdmin) {
+      const stats = await api('/api/admin/stats');
+      content.querySelector('.content-inner').insertAdjacentHTML('beforeend',
+        '<h3 class="sec-title" style="margin-top:28px;">站点管理</h3>'
+        + '<div class="stats">'
+        + '<div class="stat"><b>' + stats.users + '</b><span>用户</span></div>'
+        + '<div class="stat"><b>' + stats.threads + '</b><span>帖子</span></div>'
+        + '<div class="stat"><b>' + stats.replies + '</b><span>回复</span></div>'
+        + '<div class="stat"><b>' + stats.banned + '</b><span>已封禁</span></div></div>'
+        + '<h3 class="sec-title" style="margin-top:24px;">站点设置</h3>'
+        + '<div class="settings-row"><div><label>站点名称</label><input id="sName" value="' + esc(SETTINGS.site_name) + '"></div></div>'
+        + '<div class="settings-row"><div><label>站点简介</label><input id="sDesc" value="' + esc(SETTINGS.site_desc) + '"></div></div>'
+        + '<div class="settings-row"><div><label>强调色 (hex)</label><input id="sAccent" value="' + esc(SETTINGS.site_accent) + '"></div>'
+        + '<div class="swatches" id="sw">' + ['#0f6cbd', '#6161e6', '#0e700e', '#b8135b', '#c23500', '#5a2da4'].map((c) => '<span class="swatch" data-c="' + c + '" style="background:' + c + '"></span>').join('') + '</div></div>'
+        + '<div class="settings-row"><div><label>背景图 (上传)</label><button class="btn" id="sBg">上传背景图</button></div>'
+        + '<button class="btn primary" id="saveSite">保存站点设置</button></div>'
+        + '<h3 class="sec-title" style="margin-top:24px;">用户管理</h3><div id="userAdmin"></div>'
+        + '<h3 class="sec-title" style="margin-top:24px;">帖子管理</h3><div id="threadAdmin"></div>'
+      );
+      document.querySelectorAll('#sw .swatch').forEach((s) => s.onclick = () => (document.getElementById('sAccent').value = s.dataset.c));
+      document.getElementById('sBg').onclick = () => pickImage(1920, 0.75, async (dataUrl) => { document.getElementById('sBg').dataset.data = dataUrl; document.getElementById('sBg').textContent = '已选背景，保存生效'; });
+      document.getElementById('saveSite').onclick = async () => {
+        const payload = { site_name: document.getElementById('sName').value, site_desc: document.getElementById('sDesc').value, site_accent: document.getElementById('sAccent').value };
+        const bgData = document.getElementById('sBg').dataset.data;
+        if (bgData) payload.site_bg = bgData;
+        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
+        SETTINGS = await api('/api/settings'); applyTheme();
+        alert('站点设置已保存');
+      };
+      renderUserAdmin();
+      renderThreadAdmin();
+    }
   }
 
   async function renderUserAdmin() {

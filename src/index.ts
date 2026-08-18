@@ -170,6 +170,7 @@ app.get('/api/threads/:id', async (c) => {
   const t = await db.getThread(c.env.DB, id);
   if (!t || t.deleted) return fail('帖子不存在', 404);
   await db.incrViews(c.env.DB, id);
+  const me = user(c);
   const author = await db.getUserById(c.env.DB, t.user_id);
   const replies = await db.listReplies(c.env.DB, id);
   const replyUsers = await Promise.all(
@@ -179,13 +180,35 @@ app.get('/api/threads/:id', async (c) => {
     })
   );
   const b = (await c.env.DB.prepare('SELECT name FROM boards WHERE id = ?').bind(t.board_id).first<{ name: string }>());
+  const liked = me ? await db.isLiked(c.env.DB, me.id, 'thread', t.id) : false;
+  const likes = await db.countLikes(c.env.DB, 'thread', t.id);
   return ok({
     thread: publicThread(t, {
       author: author ? { username: author.username, avatar: author.avatar, level: db.levelFromExp(author.exp), bio: author.bio } : null,
       board_name: b ? b.name : '',
+      likes,
+      liked,
     }),
     replies: replyUsers,
   });
+});
+
+// 帖子点赞 / 取消点赞（切换）
+app.post('/api/threads/:id/like', async (c) => {
+  const me = user(c);
+  if (!me) return fail('请先登录', 401);
+  const id = Number(c.req.param('id'));
+  const t = await db.getThread(c.env.DB, id);
+  if (!t || t.deleted) return fail('帖子不存在', 404);
+  const now = await db.isLiked(c.env.DB, me.id, 'thread', id);
+  if (now) {
+    await db.unlike(c.env.DB, me.id, 'thread', id);
+  } else {
+    await db.like(c.env.DB, me.id, 'thread', id);
+    if (t.user_id !== me.id) await db.addExp(c.env.DB, t.user_id, 2); // 收到赞 +2 经验
+    await db.addExp(c.env.DB, me.id, 1); // 点赞者 +1 经验
+  }
+  return ok({ liked: !now, likes: await db.countLikes(c.env.DB, 'thread', id) });
 });
 
 // 发帖
@@ -245,10 +268,31 @@ app.get('/api/users/:username', async (c) => {
   if (!u) return fail('用户不存在', 404);
   const threads = await db.listThreads(c.env.DB, {});
   const mine = threads.filter((t) => t.user_id === u.id);
+  const me = user(c);
+  const isFollowing = me ? await db.isFollowing(c.env.DB, me.id, u.id) : false;
   return ok({
-    user: db.toPublicUser(u),
+    user: {
+      ...db.toPublicUser(u),
+      followers: await db.countFollowers(c.env.DB, u.id),
+      following: await db.countFollowing(c.env.DB, u.id),
+      likes: await db.countLikesReceived(c.env.DB, u.id),
+      is_following: isFollowing,
+    },
     threads: mine.map((t) => publicThread(t, { board_name: '' })),
   });
+});
+
+// 关注 / 取消关注（切换）
+app.post('/api/users/:username/follow', async (c) => {
+  const me = user(c);
+  if (!me) return fail('请先登录', 401);
+  const target = await db.getUserByUsername(c.env.DB, c.req.param('username'));
+  if (!target) return fail('用户不存在', 404);
+  if (target.id === me.id) return fail('不能关注自己', 400);
+  const now = await db.isFollowing(c.env.DB, me.id, target.id);
+  if (now) await db.unfollow(c.env.DB, me.id, target.id);
+  else await db.follow(c.env.DB, me.id, target.id);
+  return ok({ is_following: !now, followers: await db.countFollowers(c.env.DB, target.id) });
 });
 
 // 修改个人资料 / 头像 / 背景

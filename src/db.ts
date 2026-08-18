@@ -201,3 +201,68 @@ export async function deleteSession(db: D1Database, sid: string | undefined): Pr
   if (!sid) return;
   await db.prepare('DELETE FROM sessions WHERE id = ?').bind(sid).run();
 }
+
+/* ============ 关注 ============ */
+
+export async function follow(db: D1Database, followerId: number, followingId: number): Promise<void> {
+  if (followerId === followingId) return;
+  await db
+    .prepare('INSERT OR IGNORE INTO follows (follower_id, following_id, created_at) VALUES (?, ?, ?)')
+    .bind(followerId, followingId, Date.now())
+    .run();
+}
+
+export async function unfollow(db: D1Database, followerId: number, followingId: number): Promise<void> {
+  await db.prepare('DELETE FROM follows WHERE follower_id = ? AND following_id = ?').bind(followerId, followingId).run();
+}
+
+export async function isFollowing(db: D1Database, followerId: number, followingId: number): Promise<boolean> {
+  const r = await db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND following_id = ?').bind(followerId, followingId).first();
+  return !!r;
+}
+
+export async function countFollowers(db: D1Database, userId: number): Promise<number> {
+  const r = await db.prepare('SELECT COUNT(*) c FROM follows WHERE following_id = ?').bind(userId).first<{ c: number }>();
+  return r ? r.c : 0;
+}
+
+export async function countFollowing(db: D1Database, userId: number): Promise<number> {
+  const r = await db.prepare('SELECT COUNT(*) c FROM follows WHERE follower_id = ?').bind(userId).first<{ c: number }>();
+  return r ? r.c : 0;
+}
+
+/** 该用户收到的全部赞（其帖子 + 其回复被点赞的总和） */
+export async function countLikesReceived(db: D1Database, userId: number): Promise<number> {
+  const t = (await db
+    .prepare('SELECT COUNT(*) c FROM likes l JOIN threads t ON l.target_id = t.id WHERE l.target_type = \'thread\' AND t.user_id = ?')
+    .bind(userId)
+    .first<{ c: number }>())?.c ?? 0;
+  const rp = (await db
+    .prepare('SELECT COUNT(*) c FROM likes l JOIN replies r ON l.target_id = r.id WHERE l.target_type = \'reply\' AND r.user_id = ?')
+    .bind(userId)
+    .first<{ c: number }>())?.c ?? 0;
+  return t + rp;
+}
+
+/* ============ 点赞 ============ */
+
+export async function like(db: D1Database, userId: number, targetType: 'thread' | 'reply', targetId: number): Promise<void> {
+  await db
+    .prepare('INSERT OR IGNORE INTO likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)')
+    .bind(userId, targetType, targetId, Date.now())
+    .run();
+}
+
+export async function unlike(db: D1Database, userId: number, targetType: 'thread' | 'reply', targetId: number): Promise<void> {
+  await db.prepare('DELETE FROM likes WHERE user_id = ? AND target_type = ? AND target_id = ?').bind(userId, targetType, targetId).run();
+}
+
+export async function isLiked(db: D1Database, userId: number, targetType: 'thread' | 'reply', targetId: number): Promise<boolean> {
+  const r = await db.prepare('SELECT 1 FROM likes WHERE user_id = ? AND target_type = ? AND target_id = ?').bind(userId, targetType, targetId).first();
+  return !!r;
+}
+
+export async function countLikes(db: D1Database, targetType: 'thread' | 'reply', targetId: number): Promise<number> {
+  const r = await db.prepare('SELECT COUNT(*) c FROM likes WHERE target_type = ? AND target_id = ?').bind(targetType, targetId).first<{ c: number }>();
+  return r ? r.c : 0;
+}
