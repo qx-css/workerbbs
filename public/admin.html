@@ -130,6 +130,7 @@
       <button class="snav" data-panel="threads">帖子管理</button>
       <button class="snav" data-panel="mail">邮件设置</button>
       <button class="snav" data-panel="realtime">实时同步</button>
+      <button class="snav" data-panel="theme">主题</button>
       <span class="spacer"></span>
       <div class="foot">
         <div class="row" style="justify-content:space-between;padding:0 4px;">
@@ -233,6 +234,32 @@
               <p class="muted" style="line-height:1.7;">节点需作为独立 Worker 单独部署（见仓库 <b>ws/</b> 目录）。部署后把节点地址填到「WebSocket 端点」，并把节点里设置的 <b>API_KEY</b> 填到此处，发帖 / 回复 / 点赞 / 关注等事件就会实时推送给在线用户。</p>
               <div class="row"><button class="btn primary" id="saveRealtime">保存</button><button class="btn" id="testRealtime">测试连接</button><span class="muted" id="rtMsg"></span></div>
               <pre class="rt-result" id="rtResult" style="display:none;"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="p-theme">
+          <div class="cols">
+            <div class="card">
+              <h2>主题（上传 zip 安装）</h2>
+              <p class="muted" style="margin:0 0 14px;line-height:1.7;">当前主题：<b id="themeName">默认</b></p>
+              <div class="field"><label>选择主题包 (.zip)</label>
+                <input type="file" id="themeFile" accept=".zip,application/zip">
+              </div>
+              <div class="row">
+                <button class="btn primary" id="installTheme">安装并应用</button>
+                <button class="btn" id="removeTheme">卸载（恢复默认）</button>
+                <span class="muted" id="themeMsg"></span>
+              </div>
+              <p class="muted" style="line-height:1.7;margin-top:14px;">zip 内须含 <b>theme.css</b>（覆盖语义 CSS 变量即可换肤），可选 <b>info.json</b>（{ "name", "author", "version" }）。详见仓库 Wiki「主题开发」。</p>
+            </div>
+            <div class="card">
+              <h2>预览</h2>
+              <p class="muted" style="line-height:1.7;">安装后全站（含深色模式）会立即应用主题样式。深色变量请在 theme.css 内用 <b>[data-theme="dark"]</b> 选择器单独声明。</p>
+              <div class="row" style="gap:8px;margin-top:12px;">
+                <span style="background:var(--accent);color:#fff;padding:4px 12px;border-radius:999px;">强调色区块</span>
+                <span style="padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);">卡片</span>
+              </div>
             </div>
           </div>
         </section>

@@ -124,6 +124,14 @@
     // 否则内联样式（优先级最高）会把深色强调色顶掉，导致深色下仍是浅色蓝。
     if (theme === 'dark') document.documentElement.style.removeProperty('--accent');
     else document.documentElement.style.setProperty('--accent', SETTINGS.site_accent || '#0f6cbd');
+    // 注入用户自定义主题 CSS（覆盖语义变量换肤）。放 head 末尾，优先级高于默认 :root。
+    let tEl = document.getElementById('user-theme');
+    if (SETTINGS.theme_css) {
+      if (!tEl) { tEl = document.createElement('style'); tEl.id = 'user-theme'; document.head.appendChild(tEl); }
+      tEl.textContent = SETTINGS.theme_css;
+    } else if (tEl) {
+      tEl.remove();
+    }
     if (SETTINGS.site_bg) bg.style.backgroundImage = 'url(' + SETTINGS.site_bg + ')';
     else bg.style.backgroundImage = '';
     document.title = SETTINGS.site_name || 'WorkerBBS';

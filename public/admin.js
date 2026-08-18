@@ -92,6 +92,11 @@
     document.getElementById('rtKey').value = SETTINGS.ws_api_key || '';
   }
 
+  /* ===== 主题 ===== */
+  function renderTheme() {
+    document.getElementById('themeName').textContent = SETTINGS.theme_name || '默认';
+  }
+
   /* ===== 用户管理 ===== */
   async function renderUsers() {
     const data = await api('/api/admin/users');
@@ -347,6 +352,36 @@
       showTestResult(out.trim());
     };
 
-    await Promise.all([renderStats(), renderUsers(), renderThreads(), Promise.resolve(renderMail()), Promise.resolve(renderRealtime())]);
+    /* 主题：上传 zip 安装 / 卸载恢复默认 */
+    document.getElementById('installTheme').onclick = async () => {
+      const msg = document.getElementById('themeMsg');
+      const fileInput = document.getElementById('themeFile');
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) { msg.textContent = '请先选择 .zip 主题包'; return; }
+      if (!/\.zip$/i.test(f.name) && f.type !== 'application/zip') { msg.textContent = '请上传 .zip 文件'; return; }
+      const fd = new FormData();
+      fd.append('file', f);
+      msg.textContent = '安装中…';
+      try {
+        const r = await fetch('/api/admin/theme', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || '安装失败');
+        SETTINGS = await api('/api/settings');
+        renderTheme();
+        msg.textContent = '已安装：' + (data.name || '');
+        fileInput.value = '';
+      } catch (e) { msg.textContent = e.message; }
+    };
+    document.getElementById('removeTheme').onclick = async () => {
+      const msg = document.getElementById('themeMsg');
+      try {
+        await api('/api/admin/theme/remove', { method: 'POST' });
+        SETTINGS = await api('/api/settings');
+        renderTheme();
+        msg.textContent = '已卸载，恢复默认外观';
+      } catch (e) { msg.textContent = e.message; }
+    };
+
+    await Promise.all([renderStats(), renderUsers(), renderThreads(), Promise.resolve(renderMail()), Promise.resolve(renderRealtime()), Promise.resolve(renderTheme())]);
   })();
 })();

@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Bindings, User } from './types';
 import * as db from './db';
 import { hashPassword, verifyPassword } from './auth';
+import { unzipSync, strFromU8 } from 'fflate';
 
 type AppEnv = { Bindings: Bindings; Variables: { user: User | null } };
 const app = new Hono<AppEnv>();
@@ -87,6 +88,8 @@ app.get('/api/settings', async (c) => {
     ws_endpoint: s.ws_endpoint || '',
     resend_domain: s.resend_domain || '',
     resend_from: s.resend_from || '',
+    theme_css: s.theme_css || '',
+    theme_name: s.theme_name || '',
   });
 });
 
@@ -516,6 +519,59 @@ app.post('/api/admin/settings', async (c) => {
   if (typeof b.email_verify_enabled === 'boolean') await db.setSetting(c.env.DB, 'email_verify_enabled', b.email_verify_enabled ? '1' : '0');
   if (typeof b.ws_endpoint === 'string') await db.setSetting(c.env.DB, 'ws_endpoint', b.ws_endpoint.trim());
   if (typeof b.ws_api_key === 'string') await db.setSetting(c.env.DB, 'ws_api_key', b.ws_api_key.trim());
+  return ok({ ok: true });
+});
+
+// 上传并安装主题（zip 包：内含 theme.css，可选 info.json）
+app.post('/api/admin/theme', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  let form: any;
+  try {
+    form = await c.req.parseBody({ all: true });
+  } catch {
+    return fail('无法解析上传内容，请确认选择了 .zip 文件');
+  }
+  const file: any = form['file'];
+  if (!file || typeof file.arrayBuffer !== 'function') {
+    return fail('请上传 .zip 主题包');
+  }
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(buf);
+  } catch {
+    return fail('解压失败：不是合法的 zip 文件');
+  }
+  const names = Object.keys(files);
+  // 优先根目录 theme.css，其次任意位置的 theme.css，最后任意 .css
+  const cssName =
+    names.find((n) => /(^|\/)theme\.css$/i.test(n)) ||
+    names.find((n) => /\.css$/i.test(n));
+  if (!cssName) return fail('主题包缺少 CSS 文件（需含 theme.css）');
+  const css = strFromU8(files[cssName]);
+  if (css.length > 600_000) return fail('theme.css 过大（建议 < 600KB）', 413);
+
+  let info: any = {};
+  const infoName = names.find((n) => /(^|\/)info\.json$/i.test(n));
+  if (infoName) {
+    try { info = JSON.parse(strFromU8(files[infoName])); } catch { /* 解析失败则用默认 */ }
+  }
+  const name = (typeof info.name === 'string' && info.name.trim()) || '未命名主题';
+  const author = (typeof info.author === 'string' && info.author.trim()) || '';
+  const version = (typeof info.version === 'string' && info.version.trim()) || '';
+
+  await db.setSetting(c.env.DB, 'theme_css', css);
+  await db.setSetting(c.env.DB, 'theme_name', name);
+  return ok({ ok: true, name, author, version, size: css.length });
+});
+
+// 卸载主题（恢复默认外观）
+app.post('/api/admin/theme/remove', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  await db.setSetting(c.env.DB, 'theme_css', '');
+  await db.setSetting(c.env.DB, 'theme_name', '');
   return ok({ ok: true });
 });
 
