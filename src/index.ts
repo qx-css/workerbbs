@@ -257,24 +257,45 @@ app.get('/api/boards', async (c) => {
   return ok({ boards: await db.listBoards(c.env.DB) });
 });
 
+// 全局搜索：帖子（标题/正文）+ 用户（用户名/简介）
+app.get('/api/search', async (c) => {
+  const q = (c.req.query('q') || '').trim();
+  if (q.length < 1) return ok({ threads: [], users: [] });
+  const threads = await db.listThreads(c.env.DB, { q, pageSize: 15 });
+  const authorMap = await db.getUsersByIds(c.env.DB, threads.map((t) => t.user_id));
+  const replyMap = await db.getReplyCountsByThreads(c.env.DB, threads.map((t) => t.id));
+  const boardMap = await db.getBoardNamesByIds(c.env.DB, threads.map((t) => t.board_id));
+  const threadsRes = threads.map((t) => {
+    const a = authorMap[t.user_id];
+    return publicThread(t, {
+      author: a ? { username: a.username, avatar: a.avatar, level: db.levelFromExp(a.exp) } : null,
+      reply_count: replyMap[t.id] || 0,
+      board_name: boardMap[t.board_id] || '',
+    });
+  });
+  const users = (await db.searchUsers(c.env.DB, q, 8)).map((u) => db.toPublicUser(u));
+  return ok({ threads: threadsRes, users });
+});
+
 // 帖子列表（支持 board / 搜索 / 分页）
+// 性能：一次性批量取作者 / 回复数 / 板块名，避免逐帖 N+1 往返 D1。
 app.get('/api/threads', async (c) => {
   const boardId = c.req.query('board') ? Number(c.req.query('board')) : undefined;
   const q = c.req.query('q') || undefined;
   const page = c.req.query('page') ? Number(c.req.query('page')) : 1;
   const threads = await db.listThreads(c.env.DB, { boardId, q, page });
-  const withMeta = await Promise.all(
-    threads.map(async (t) => {
-      const author = await db.getUserById(c.env.DB, t.user_id);
-      const replies = await db.countReplies(c.env.DB, t.id);
-      const b = (await c.env.DB.prepare('SELECT name FROM boards WHERE id = ?').bind(t.board_id).first<{ name: string }>());
-      return publicThread(t, {
-        author: author ? { username: author.username, avatar: author.avatar, level: db.levelFromExp(author.exp) } : null,
-        reply_count: replies,
-        board_name: b ? b.name : '',
-      });
-    })
-  );
+  const ids = threads.map((t) => t.id);
+  const authorMap = await db.getUsersByIds(c.env.DB, threads.map((t) => t.user_id));
+  const replyMap = await db.getReplyCountsByThreads(c.env.DB, ids);
+  const boardMap = await db.getBoardNamesByIds(c.env.DB, threads.map((t) => t.board_id));
+  const withMeta = threads.map((t) => {
+    const a = authorMap[t.user_id];
+    return publicThread(t, {
+      author: a ? { username: a.username, avatar: a.avatar, level: db.levelFromExp(a.exp) } : null,
+      reply_count: replyMap[t.id] || 0,
+      board_name: boardMap[t.board_id] || '',
+    });
+  });
   return ok({ threads: withMeta });
 });
 
@@ -287,12 +308,11 @@ app.get('/api/threads/:id', async (c) => {
   const me = user(c);
   const author = await db.getUserById(c.env.DB, t.user_id);
   const replies = await db.listReplies(c.env.DB, id);
-  const replyUsers = await Promise.all(
-    replies.map(async (r) => {
-      const u = await db.getUserById(c.env.DB, r.user_id);
-      return { ...r, author: u ? { username: u.username, avatar: u.avatar, level: db.levelFromExp(u.exp) } : null };
-    })
-  );
+  const replyAuthorMap = await db.getUsersByIds(c.env.DB, replies.map((r) => r.user_id));
+  const replyUsers = replies.map((r) => {
+    const u = replyAuthorMap[r.user_id];
+    return { ...r, author: u ? { username: u.username, avatar: u.avatar, level: db.levelFromExp(u.exp) } : null };
+  });
   const b = (await c.env.DB.prepare('SELECT name FROM boards WHERE id = ?').bind(t.board_id).first<{ name: string }>());
   const liked = me ? await db.isLiked(c.env.DB, me.id, 'thread', t.id) : false;
   const likes = await db.countLikes(c.env.DB, 'thread', t.id);
@@ -386,8 +406,7 @@ app.get('/api/users/:username', async (c) => {
   const username = c.req.param('username');
   const u = await db.getUserByUsername(c.env.DB, username);
   if (!u) return fail('用户不存在', 404);
-  const threads = await db.listThreads(c.env.DB, {});
-  const mine = threads.filter((t) => t.user_id === u.id);
+  const threads = await db.listThreadsByUser(c.env.DB, u.id);
   const me = user(c);
   const isFollowing = me ? await db.isFollowing(c.env.DB, me.id, u.id) : false;
   return ok({
@@ -398,7 +417,7 @@ app.get('/api/users/:username', async (c) => {
       likes: await db.countLikesReceived(c.env.DB, u.id),
       is_following: isFollowing,
     },
-    threads: mine.map((t) => publicThread(t, { board_name: '' })),
+    threads: threads.map((t) => publicThread(t, { board_name: '' })),
   });
 });
 

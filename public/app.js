@@ -67,15 +67,32 @@
       : '<span class="' + cls + '"' + attr + '>' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
   }
 
+  /* ===== 全局加载指示（顶部进度条）===== */
+  let __load = 0;
+  let __bar = null;
+  function beginLoad() {
+    __load++;
+    if (!__bar) __bar = document.getElementById('loading-bar');
+    if (__bar) __bar.classList.add('active');
+  }
+  function endLoad() {
+    __load = Math.max(0, __load - 1);
+    if (__load === 0 && __bar) __bar.classList.remove('active');
+  }
   async function api(path, opts) {
-    opts = opts || {};
-    opts.credentials = 'same-origin';
-    opts.headers = Object.assign({ 'content-type': 'application/json' }, opts.headers || {});
-    const res = await fetch(path, opts);
-    let data = null;
-    try { data = await res.json(); } catch (e) {}
-    if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status);
-    return data;
+    beginLoad();
+    try {
+      opts = opts || {};
+      opts.credentials = 'same-origin';
+      opts.headers = Object.assign({ 'content-type': 'application/json' }, opts.headers || {});
+      const res = await fetch(path, opts);
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
+      if (!res.ok) throw new Error((data && data.error) || 'HTTP ' + res.status);
+      return data;
+    } finally {
+      endLoad();
+    }
   }
   function timeAgo(ts) {
     const s = Math.floor((Date.now() - ts) / 1000);
@@ -186,6 +203,15 @@
       + '</div></article>';
   }
 
+  // 搜索结果里的用户行
+  function userRow(u) {
+    const bio = (u.bio && u.bio !== DEFAULT_BIO) ? u.bio : '这个人很神秘';
+    return '<div class="user-row" data-user="' + esc(u.username) + '">'
+      + avatarHTML(u)
+      + '<div class="u-main"><div class="u-name">' + esc(u.username) + (u.level ? ' <span class="lvl">Lv.' + u.level + '</span>' : '') + '</div>'
+      + '<div class="u-bio muted">' + esc(bio) + '</div></div></div>';
+  }
+
   // 全局委托：点击头像 → 进入该用户主页（优先于帖子卡片跳转）
   content.addEventListener('click', (e) => {
     const av = e.target.closest('.avatar.clickable');
@@ -229,6 +255,35 @@
     q.addEventListener('input', () => render(q.value.trim()));
     render('');
     q.focus();
+  }
+
+  async function viewSearch() {
+    const m = location.hash.match(/\?q=([^&]*)/);
+    const q = decodeURIComponent(m ? m[1] : '');
+    content.innerHTML =
+      '<div class="appbar"><h1>搜索</h1><span class="spacer"></span></div>'
+      + '<div class="content-inner">'
+      + '<div class="search" style="margin-bottom:14px;"><input id="sfield" type="search" placeholder="搜索帖子或用户…" autocomplete="off" value="' + esc(q) + '" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;font-size:14px;" /></div>'
+      + '<div id="sresult"></div>'
+      + '</div>';
+    const field = document.getElementById('sfield');
+    const box = document.getElementById('sresult');
+    const render = async () => {
+      const text = field.value.trim();
+      if (!text) { box.innerHTML = '<div class="empty">输入关键词开始搜索</div>'; return; }
+      try {
+        const r = await api('/api/search?q=' + encodeURIComponent(text));
+        let html = '';
+        if (r.users && r.users.length) html += '<h3 class="sec-title">用户</h3><div class="user-list">' + r.users.map(userRow).join('') + '</div>';
+        if (r.threads && r.threads.length) html += '<h3 class="sec-title">帖子</h3><div class="feed">' + r.threads.map(threadCard).join('') + '</div>';
+        if (!html) html = '<div class="empty">没有找到与「' + esc(text) + '」相关的内容</div>';
+        box.innerHTML = html;
+      } catch (e) { box.innerHTML = '<div class="empty">搜索失败：' + esc(e.message) + '</div>'; }
+    };
+    field.addEventListener('input', render);
+    field.focus();
+    if (q) render();
+    else box.innerHTML = '<div class="empty">输入关键词开始搜索</div>';
   }
 
   async function viewCompose() {
@@ -674,15 +729,21 @@
   async function router() {
     let hash = location.hash || '#/home';
     setActive(hash.split('/').slice(0, 2).join('/'));
-    if (hash.startsWith('#/thread/')) return viewThread(hash.split('/')[2]);
-    if (hash.startsWith('#/user/')) return viewUser(hash.split('/')[2]);
-    if (hash.startsWith('#/verify/')) return viewVerify(hash.split('/')[2]);
-    if (hash.startsWith('#/plugin/')) {
-      const parts = hash.split('/');
-      return viewPlugin(parts[2] || '', parts.slice(3).join('/'));
+    beginLoad();
+    try {
+      if (hash.startsWith('#/thread/')) return viewThread(hash.split('/')[2]);
+      if (hash.startsWith('#/user/')) return viewUser(hash.split('/')[2]);
+      if (hash.startsWith('#/verify/')) return viewVerify(hash.split('/')[2]);
+      if (hash.startsWith('#/search')) return viewSearch();
+      if (hash.startsWith('#/plugin/')) {
+        const parts = hash.split('/');
+        return viewPlugin(parts[2] || '', parts.slice(3).join('/'));
+      }
+      const fn = routes[hash] || viewHome;
+      try { await fn(); } catch (e) { content.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
+    } finally {
+      endLoad();
     }
-    const fn = routes[hash] || viewHome;
-    try { await fn(); } catch (e) { content.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; }
   }
 
   // 邮箱验证结果页
@@ -718,6 +779,30 @@
       content.innerHTML = '<div class="empty">插件加载失败：' + esc(e.message) + '</div>';
     }
   }
+
+  /* ===== 全局搜索：常驻搜索框 + 快捷键（/ 或 Ctrl/Cmd+K）===== */
+  function isEditableEl(el) {
+    if (!el) return false;
+    const t = (el.tagName || '').toLowerCase();
+    return t === 'input' || t === 'textarea' || t === 'select' || el.isContentEditable;
+  }
+  function focusSearch() {
+    const inp = document.getElementById('searchInput');
+    if (inp) { inp.focus(); inp.select(); }
+  }
+  function doSearchFromBar() {
+    const inp = document.getElementById('searchInput');
+    const v = (inp && inp.value || '').trim();
+    if (v) location.hash = '#/search?q=' + encodeURIComponent(v);
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !isEditableEl(document.activeElement)) { e.preventDefault(); focusSearch(); }
+    else if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); focusSearch(); }
+  });
+  const gsForm = document.getElementById('globalSearch');
+  if (gsForm) gsForm.addEventListener('submit', (e) => { e.preventDefault(); doSearchFromBar(); });
+  const gsInput = document.getElementById('searchInput');
+  if (gsInput) gsInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSearchFromBar(); } });
 
   /* ===== 启动 ===== */
   (async function init() {

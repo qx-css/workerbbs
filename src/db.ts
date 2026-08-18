@@ -127,6 +127,58 @@ export async function listThreads(
   return (await db.prepare(sql).bind(...binds).all()).results as unknown as Thread[];
 }
 
+/** 某用户发布的帖子（用于个人主页，避免全表扫描后内存过滤） */
+export async function listThreadsByUser(db: D1Database, userId: number, limit = 50): Promise<Thread[]> {
+  return (await db
+    .prepare('SELECT * FROM threads WHERE user_id = ? AND deleted = 0 ORDER BY id DESC LIMIT ?')
+    .bind(userId, limit)
+    .all()).results as unknown as Thread[];
+}
+
+/* ============ 批量查询（消除 N+1，降低 D1 往返） ============ */
+
+/** 按 id 批量取用户，返回 id → User 映射 */
+export async function getUsersByIds(db: D1Database, ids: number[]): Promise<Record<number, User>> {
+  const uniq = Array.from(new Set(ids));
+  if (!uniq.length) return {};
+  const sql = 'SELECT * FROM users WHERE id IN (' + uniq.map(() => '?').join(',') + ')';
+  const rows = (await db.prepare(sql).bind(...uniq).all()).results as unknown as User[];
+  const map: Record<number, User> = {};
+  for (const r of rows) map[r.id] = r;
+  return map;
+}
+
+/** 批量统计多个帖子的回复数，返回 threadId → count 映射 */
+export async function getReplyCountsByThreads(db: D1Database, threadIds: number[]): Promise<Record<number, number>> {
+  const uniq = Array.from(new Set(threadIds));
+  if (!uniq.length) return {};
+  const sql = 'SELECT thread_id, COUNT(*) c FROM replies WHERE thread_id IN (' + uniq.map(() => '?').join(',') + ') AND deleted = 0 GROUP BY thread_id';
+  const rows = (await db.prepare(sql).bind(...uniq).all()).results as unknown as { thread_id: number; c: number }[];
+  const map: Record<number, number> = {};
+  for (const r of rows) map[r.thread_id] = r.c;
+  return map;
+}
+
+/** 批量取板块名，返回 boardId → name 映射 */
+export async function getBoardNamesByIds(db: D1Database, ids: number[]): Promise<Record<number, string>> {
+  const uniq = Array.from(new Set(ids));
+  if (!uniq.length) return {};
+  const sql = 'SELECT id, name FROM boards WHERE id IN (' + uniq.map(() => '?').join(',') + ')';
+  const rows = (await db.prepare(sql).bind(...uniq).all()).results as unknown as { id: number; name: string }[];
+  const map: Record<number, string> = {};
+  for (const r of rows) map[r.id] = r.name;
+  return map;
+}
+
+/** 全文搜索用户（用户名 / 简介） */
+export async function searchUsers(db: D1Database, q: string, limit = 10): Promise<User[]> {
+  const like = `%${q}%`;
+  return (await db
+    .prepare('SELECT id, username, avatar, bio, exp, role, created_at FROM users WHERE username LIKE ? OR bio LIKE ? ORDER BY id DESC LIMIT ?')
+    .bind(like, like, limit)
+    .all()).results as unknown as User[];
+}
+
 export async function getThread(db: D1Database, id: number): Promise<Thread | null> {
   return db.prepare('SELECT * FROM threads WHERE id = ?').bind(id).first<Thread>();
 }

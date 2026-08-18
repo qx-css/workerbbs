@@ -77,6 +77,21 @@
   .topbar .logo { height: 28px; width: 28px; object-fit: contain; border-radius: 6px; flex: none; }
   .topbar .sitename { font-weight: 600; font-size: 15px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .topbar .spacer { flex: 1; }
+  /* 顶栏常驻搜索框 */
+  .topbar .search { max-width: 380px; margin: 0 14px; }
+  .topbar .search input { height: 32px; }
+  /* 全局加载进度条 */
+  .loading-bar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 500; background: var(--accent); transform: scaleX(0); transform-origin: left; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-enter); }
+  .loading-bar.active { opacity: 1; animation: load-indet 1.05s var(--ease-std) infinite; }
+  @keyframes load-indet { 0% { transform: scaleX(0.04); } 45% { transform: scaleX(0.55); } 100% { transform: scaleX(0.04); } }
+  /* 搜索结果页 */
+  .sec-title { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 18px 0 8px; }
+  .user-list { display: flex; flex-direction: column; gap: 8px; }
+  .user-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: border-color var(--dur-fast); }
+  .user-row:hover { border-color: var(--accent); }
+  .user-row .u-main { min-width: 0; }
+  .user-row .u-name { font-weight: 600; font-size: 14px; }
+  .user-row .u-bio { font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .appbar {
     position: sticky; top: 48px; z-index: 5; display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px;
     background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: saturate(180%) blur(12px); border-bottom: 1px solid var(--border);
@@ -295,8 +310,9 @@
 </head>
 <body>
   <div id="bg"></div>
+  <div id="loading-bar" class="loading-bar" aria-hidden="true"></div>
   <nav class="rail" id="rail" aria-label="主导航"></nav>
-  <header class="topbar" id="topbar"><img class="logo" id="siteLogo" alt="站点 LOGO" hidden><span class="sitename" id="siteName"></span><span class="spacer"></span></header>
+  <header class="topbar" id="topbar"><img class="logo" id="siteLogo" alt="站点 LOGO" hidden><span class="sitename" id="siteName"></span><form class="search" id="globalSearch" role="search"><input id="searchInput" type="search" placeholder="搜索帖子或用户…  （ / 或 Ctrl+K ）" autocomplete="off" aria-label="搜索" /></form><span class="spacer"></span></header>
   <main class="content" id="content"></main>
   <div id="modal-root"></div>
   <script src="/icons.js"></script>
