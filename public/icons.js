@@ -41,6 +41,10 @@
     rotate: '<path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/>',
     sparkle: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
     chat: '<path d="M5 4h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/>',
+    emoji: '<circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.1" fill="currentColor"/><circle cx="15" cy="10" r="1.1" fill="currentColor"/><path d="M8.5 14.5c1 1.2 2.2 1.8 3.5 1.8s2.5-.6 3.5-1.8" fill="none" stroke="currentColor"/>',
+    tag: '<path d="M3 11.4V4h7.4L21 14.6 14.6 21 3 11.4Z"/><circle cx="7.4" cy="7.4" r="1.4" fill="currentColor" stroke="none"/>',
+    key: '<circle cx="8" cy="8" r="4"/><path d="M11 11l9 9M16.5 16.5l2.5-2.5M14.5 14.5l2-2"/>',
+    navigation: '<path d="M12 3 21 8 12 13 3 8 12 3Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/>',
   };
 
   // 实心（填充）图标：整段 <svg>

@@ -111,6 +111,41 @@
     #rotate h2 { margin: 0; font-size: 17px; }
   }
   @media (max-width: 1080px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } .cols { grid-template-columns: minmax(0,1fr); } }
+
+  /* ===== 数据全景图表 ===== */
+  .charts { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; margin-top: 16px; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .chart-card h3 { margin: 0 0 10px; font-size: 13px; color: var(--text-2); font-weight: 600; }
+  .chart-card svg { width: 100%; height: auto; display: block; }
+  .chart-legend { display: flex; gap: 14px; margin-top: 6px; font-size: 11px; color: var(--text-2); }
+  .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
+
+  /* ===== 标签 / 群组列表 ===== */
+  .tagitem, .grpitm { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .tagitem:last-child, .grpitm:last-child { border-bottom: none; }
+  .dotc { width: 14px; height: 14px; border-radius: 50%; flex: 0 0 auto; }
+  .tagitem .nm, .grpitm .nm { font-weight: 600; }
+  .tagitem .meta, .grpitm .meta { color: var(--text-2); font-size: 12px; }
+  .tagitem .sp, .grpitm .sp { flex: 1; }
+
+  /* ===== 邀请码列表 ===== */
+  .inv-row { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .inv-row:last-child { border-bottom: none; }
+  .inv-code { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 600; }
+  .inv-status { font-size: 11px; padding: 1px 8px; border-radius: 999px; }
+  .inv-status.ok { background: color-mix(in srgb, #107c10 16%, transparent); color: #107c10; }
+  .inv-status.no { background: color-mix(in srgb, #c42b1c 16%, transparent); color: #c42b1c; }
+
+  /* ===== 后台弹窗（标签 / 群组分配） ===== */
+  #adminModal .mask { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 200; }
+  #adminModal .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; width: min(440px, 92vw); max-height: 80vh; overflow: auto; }
+  #adminModal .box h3 { margin: 0 0 14px; font-size: 15px; }
+  #adminModal .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  #adminModal .pick { font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); cursor: pointer; user-select: none; }
+  #adminModal .pick.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  #adminModal .row { display: flex; gap: 10px; justify-content: flex-end; }
+
+  @media (max-width: 1080px) { .charts { grid-template-columns: minmax(0,1fr); } }
 </style>
 </head>
 <body>
@@ -128,6 +163,10 @@
       <button class="snav" data-panel="site">站点设置</button>
       <button class="snav" data-panel="users">用户管理</button>
       <button class="snav" data-panel="threads">帖子管理</button>
+      <button class="snav" data-panel="tags">标签</button>
+      <button class="snav" data-panel="invite">邀请码</button>
+      <button class="snav" data-panel="broadcast">群发邮件</button>
+      <button class="snav" data-panel="groups">群组</button>
       <button class="snav" data-panel="mail">邮件设置</button>
       <button class="snav" data-panel="realtime">实时同步</button>
       <button class="snav" data-panel="theme">主题</button>
@@ -151,6 +190,7 @@
       <div class="wrap">
         <section class="panel show" id="p-overview">
           <div class="stats" id="stats"></div>
+          <div class="charts" id="charts"></div>
         </section>
 
         <section class="panel" id="p-site">
@@ -275,9 +315,90 @@
             <span class="muted" id="pluginMsg" style="display:block;margin-top:12px;"></span>
           </div>
         </section>
+
+        <section class="panel" id="p-tags">
+          <div class="cols">
+            <div class="card">
+              <h2>标签管理</h2>
+              <div class="row" style="gap:8px;margin-bottom:12px;">
+                <input id="tagName" placeholder="标签名" style="flex:1;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                <input id="tagColor" type="color" value="#0f6cbd" style="width:42px;height:34px;border:1px solid var(--border);border-radius:6px;background:var(--surface);">
+                <button class="btn primary" id="tagAdd">添加</button>
+              </div>
+              <div id="tagList"></div>
+            </div>
+            <div class="card">
+              <h2>说明</h2>
+              <p class="muted" style="line-height:1.7;">标签用于给帖子分类，可在「帖子管理」里给每条帖子勾选标签。点击列表中的标签可编辑名称 / 颜色，删除会同时解除相关帖子关联。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="p-invite">
+          <div class="cols">
+            <div class="card">
+              <h2>邀请码注册</h2>
+              <div class="row" style="margin-bottom:14px;">
+                <span class="muted">开启后，新用户注册必须填写有效邀请码</span>
+                <label class="switch"><input type="checkbox" id="inviteToggle"><span class="slider"></span></label>
+              </div>
+              <div class="field"><label>生成数量</label><input id="invCount" type="number" min="1" max="50" value="1" style="font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>
+              <div class="field"><label>每个码可使用次数</label><input id="invMax" type="number" min="1" max="100" value="1" style="font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>
+              <div class="field"><label>有效期（天，0=永久）</label><input id="invExp" type="number" min="0" max="3650" value="0" style="font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>
+              <div class="field"><label>备注</label><input id="invNote" placeholder="可选" style="font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>
+              <div class="row"><button class="btn primary" id="invGen">生成邀请码</button><span class="muted" id="invMsg"></span></div>
+              <pre class="rt-result" id="invCodes" style="display:none;"></pre>
+            </div>
+            <div class="card">
+              <h2>已有邀请码</h2>
+              <div id="invList"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="p-broadcast">
+          <div class="cols">
+            <div class="card">
+              <h2>群发邮件</h2>
+              <div class="field"><label>主题</label><input id="bcSubject" placeholder="邮件主题" style="font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>
+              <div class="field"><label>正文（支持 HTML）</label><textarea id="bcBody" rows="8" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></textarea></div>
+              <div class="field"><label>收件范围</label>
+                <select id="bcScope" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                  <option value="all">全部用户</option>
+                  <option value="group">指定群组</option>
+                </select>
+              </div>
+              <div class="field" id="bcGroupWrap" style="display:none;"><label>选择群组</label><select id="bcGroup" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></select></div>
+              <div class="row"><button class="btn primary" id="bcSend">发送</button><span class="muted" id="bcMsg"></span></div>
+            </div>
+            <div class="card">
+              <h2>说明</h2>
+              <p class="muted" style="line-height:1.7;">使用「邮件设置」里配置的 Resend 发信。邮件在后台异步发送（不阻塞页面），发送完成后会记录成功 / 失败数量。收件人为已注册用户。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" id="p-groups">
+          <div class="cols">
+            <div class="card">
+              <h2>群组（权限分组）</h2>
+              <div class="row" style="gap:8px;margin-bottom:12px;">
+                <input id="grpName" placeholder="组名" style="flex:1;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                <input id="grpColor" type="color" value="#0f6cbd" style="width:42px;height:34px;border:1px solid var(--border);border-radius:6px;background:var(--surface);">
+                <button class="btn primary" id="grpAdd">添加</button>
+              </div>
+              <div id="grpList"></div>
+            </div>
+            <div class="card">
+              <h2>说明</h2>
+              <p class="muted" style="line-height:1.7;">群组用于在「用户管理」中给用户打标（如「版主」「VIP」），会显示在其主页与帖子署名处。点击组名可编辑名称 / 颜色，删除会同时解除成员关系。</p>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   </div>
+  <div id="adminModal"></div>
   <script src="/icons.js"></script>
   <script src="/admin.js"></script>
 </body>

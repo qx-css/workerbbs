@@ -185,11 +185,11 @@ export async function getThread(db: D1Database, id: number): Promise<Thread | nu
 
 export async function createThread(
   db: D1Database,
-  data: { boardId: number; userId: number; title: string; body: string }
+  data: { boardId: number; userId: number; title: string; body: string; quoteThreadId?: number }
 ): Promise<number> {
   const info = await db
-    .prepare('INSERT INTO threads (board_id, user_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(data.boardId, data.userId, data.title, data.body, Date.now())
+    .prepare('INSERT INTO threads (board_id, user_id, title, body, quote_thread_id, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(data.boardId, data.userId, data.title, data.body, data.quoteThreadId || 0, Date.now())
     .run();
   return Number(info.meta.last_row_id);
 }
@@ -223,11 +223,11 @@ export async function listReplies(db: D1Database, threadId: number): Promise<Rep
 
 export async function createReply(
   db: D1Database,
-  data: { threadId: number; userId: number; body: string }
+  data: { threadId: number; userId: number; body: string; quoteReplyId?: number }
 ): Promise<number> {
   const info = await db
-    .prepare('INSERT INTO replies (thread_id, user_id, body, created_at) VALUES (?, ?, ?, ?)')
-    .bind(data.threadId, data.userId, data.body, Date.now())
+    .prepare('INSERT INTO replies (thread_id, user_id, body, quote_reply_id, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(data.threadId, data.userId, data.body, data.quoteReplyId || 0, Date.now())
     .run();
   return Number(info.meta.last_row_id);
 }
@@ -435,4 +435,180 @@ export async function setPluginKv(db: D1Database, plugin: string, k: string, v: 
     .prepare('INSERT INTO plugin_kv (plugin, k, v) VALUES (?, ?, ?) ON CONFLICT(plugin, k) DO UPDATE SET v = excluded.v')
     .bind(plugin, k, v)
     .run();
+}
+
+/* ============ 表情回应（QQ 式） ============ */
+
+export type ReactionSummary = Record<string, { count: number; mine: boolean }>;
+
+/** 切换某用户对某目标的某个表情：已点则取消，未点则添加。返回最终是否已点。 */
+export async function toggleReaction(
+  db: D1Database, userId: number, targetType: 'thread' | 'reply', targetId: number, emoji: string
+): Promise<{ reacted: boolean }> {
+  const existing = await db
+    .prepare('SELECT 1 FROM reactions WHERE user_id = ? AND target_type = ? AND target_id = ? AND emoji = ?')
+    .bind(userId, targetType, targetId, emoji).first();
+  if (existing) {
+    await db.prepare('DELETE FROM reactions WHERE user_id = ? AND target_type = ? AND target_id = ? AND emoji = ?')
+      .bind(userId, targetType, targetId, emoji).run();
+    return { reacted: false };
+  }
+  await db.prepare('INSERT OR IGNORE INTO reactions (user_id, target_type, target_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(userId, targetType, targetId, emoji, Date.now()).run();
+  return { reacted: true };
+}
+
+/** 批量聚合多个目标的表情回应，返回 targetId -> { emoji: {count, mine} } */
+export async function getReactionSummaries(
+  db: D1Database, targetType: 'thread' | 'reply', targetIds: number[], meId: number | null
+): Promise<Record<number, ReactionSummary>> {
+  const map: Record<number, ReactionSummary> = {};
+  const uniq = Array.from(new Set(targetIds.filter((i) => i > 0)));
+  if (!uniq.length) return map;
+  const rows = (await db
+    .prepare('SELECT target_id, emoji, COUNT(*) c, SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) mine FROM reactions WHERE target_type = ? AND target_id IN (' + uniq.map(() => '?').join(',') + ') GROUP BY target_id, emoji')
+    .bind(meId ?? -1, targetType, ...uniq)
+    .all()).results as unknown as { target_id: number; emoji: string; c: number; mine: number }[];
+  for (const r of rows) {
+    if (!map[r.target_id]) map[r.target_id] = {};
+    map[r.target_id][r.emoji] = { count: r.c, mine: r.mine > 0 };
+  }
+  return map;
+}
+
+/* ============ 引用快照（用于列表 / 详情内联展示） ============ */
+
+export async function getQuotedThreads(db: D1Database, ids: number[]): Promise<Record<number, { id: number; title: string; author: string }>> {
+  const uniq = Array.from(new Set(ids.filter((i) => i > 0)));
+  if (!uniq.length) return {};
+  const rows = (await db.prepare('SELECT t.id, t.title, u.username FROM threads t LEFT JOIN users u ON u.id = t.user_id WHERE t.id IN (' + uniq.map(() => '?').join(',') + ')').bind(...uniq).all()).results as unknown as { id: number; title: string; username: string }[];
+  const map: Record<number, { id: number; title: string; author: string }> = {};
+  for (const r of rows) map[r.id] = { id: r.id, title: r.title, author: r.username || '未知' };
+  return map;
+}
+
+export async function getQuotedReplies(db: D1Database, ids: number[]): Promise<Record<number, { id: number; body: string; author: string }>> {
+  const uniq = Array.from(new Set(ids.filter((i) => i > 0)));
+  if (!uniq.length) return {};
+  const rows = (await db.prepare('SELECT r.id, r.body, u.username FROM replies r LEFT JOIN users u ON u.id = r.user_id WHERE r.id IN (' + uniq.map(() => '?').join(',') + ')').bind(...uniq).all()).results as unknown as { id: number; body: string; username: string }[];
+  const map: Record<number, { id: number; body: string; author: string }> = {};
+  for (const r of rows) map[r.id] = { id: r.id, body: r.body, author: r.username || '未知' };
+  return map;
+}
+
+/* ============ 标签（管理员编辑） ============ */
+
+export interface TagRow { id: number; name: string; color: string; }
+
+export async function listTags(db: D1Database): Promise<TagRow[]> {
+  return (await db.prepare('SELECT * FROM tags ORDER BY id ASC').all()).results as unknown as TagRow[];
+}
+export async function createTag(db: D1Database, name: string, color: string): Promise<number> {
+  const info = await db.prepare('INSERT INTO tags (name, color, created_at) VALUES (?, ?, ?)').bind(name, color, Date.now()).run();
+  return Number(info.meta.last_row_id);
+}
+export async function updateTag(db: D1Database, id: number, name: string, color: string): Promise<void> {
+  await db.prepare('UPDATE tags SET name = ?, color = ? WHERE id = ?').bind(name, color, id).run();
+}
+export async function deleteTag(db: D1Database, id: number): Promise<void> {
+  await db.prepare('DELETE FROM tags WHERE id = ?').bind(id).run();
+  await db.prepare('DELETE FROM thread_tags WHERE tag_id = ?').bind(id).run();
+}
+export async function getTagsByThreadIds(db: D1Database, threadIds: number[]): Promise<Record<number, TagRow[]>> {
+  const uniq = Array.from(new Set(threadIds.filter((i) => i > 0)));
+  const map: Record<number, TagRow[]> = {};
+  if (!uniq.length) return map;
+  const rows = (await db.prepare('SELECT tt.thread_id, t.id, t.name, t.color FROM thread_tags tt JOIN tags t ON t.id = tt.tag_id WHERE tt.thread_id IN (' + uniq.map(() => '?').join(',') + ')').bind(...uniq).all()).results as unknown as { thread_id: number; id: number; name: string; color: string }[];
+  for (const r of rows) {
+    if (!map[r.thread_id]) map[r.thread_id] = [];
+    map[r.thread_id].push({ id: r.id, name: r.name, color: r.color });
+  }
+  return map;
+}
+export async function setThreadTags(db: D1Database, threadId: number, tagIds: number[]): Promise<void> {
+  await db.prepare('DELETE FROM thread_tags WHERE thread_id = ?').bind(threadId).run();
+  for (const tid of Array.from(new Set(tagIds.filter((i) => i > 0)))) {
+    await db.prepare('INSERT OR IGNORE INTO thread_tags (thread_id, tag_id) VALUES (?, ?)').bind(threadId, tid).run();
+  }
+}
+export async function listThreadsByTag(db: D1Database, tagId: number, page = 1, pageSize = 20): Promise<Thread[]> {
+  const offset = (Math.max(1, page) - 1) * pageSize;
+  return (await db.prepare('SELECT t.* FROM threads t JOIN thread_tags tt ON tt.thread_id = t.id WHERE tt.tag_id = ? AND t.deleted = 0 ORDER BY t.id DESC LIMIT ? OFFSET ?').bind(tagId, pageSize, offset).all()).results as unknown as Thread[];
+}
+
+/* ============ 邀请码注册 ============ */
+
+export async function isInviteRequired(db: D1Database): Promise<boolean> {
+  return (await getSetting(db, 'invite_required')) === '1';
+}
+export interface InviteRow {
+  code: string; created_by: number; used_by: number | null; note: string;
+  uses: number; max_uses: number; created_at: number; expires_at: number | null;
+}
+export async function createInviteCode(db: D1Database, row: { code: string; createdBy: number; note?: string; maxUses?: number; expiresAt?: number | null }): Promise<void> {
+  await db.prepare('INSERT OR IGNORE INTO invite_codes (code, created_by, used_by, note, uses, max_uses, created_at, expires_at) VALUES (?, ?, NULL, ?, 0, ?, ?, ?)')
+    .bind(row.code, row.createdBy, row.note || '', row.maxUses ?? 1, row.expiresAt ?? null, Date.now()).run();
+}
+export async function listInviteCodes(db: D1Database): Promise<InviteRow[]> {
+  return (await db.prepare('SELECT * FROM invite_codes ORDER BY created_at DESC').all()).results as unknown as InviteRow[];
+}
+export async function getInviteCode(db: D1Database, code: string): Promise<InviteRow | null> {
+  return db.prepare('SELECT * FROM invite_codes WHERE code = ?').bind(code).first<InviteRow>();
+}
+export async function validateInviteCode(db: D1Database, code: string): Promise<{ ok: boolean; reason?: string; row?: InviteRow }> {
+  const row = await getInviteCode(db, code);
+  if (!row) return { ok: false, reason: '邀请码不存在' };
+  if (row.expires_at && row.expires_at < Date.now()) return { ok: false, reason: '邀请码已过期' };
+  if (row.uses >= row.max_uses) return { ok: false, reason: '邀请码已达使用上限' };
+  return { ok: true, row };
+}
+export async function useInviteCode(db: D1Database, code: string, userId: number): Promise<void> {
+  const row = await getInviteCode(db, code);
+  if (!row) return;
+  const newUses = row.uses + 1;
+  const usedBy = row.max_uses <= 1 ? userId : (row.used_by || userId);
+  await db.prepare('UPDATE invite_codes SET uses = ?, used_by = ? WHERE code = ?').bind(newUses, usedBy, code).run();
+}
+
+/* ============ 群组（权限分组） ============ */
+
+export interface GroupRow { id: number; name: string; description: string; color: string; }
+
+export async function listGroups(db: D1Database): Promise<GroupRow[]> {
+  return (await db.prepare('SELECT * FROM groups ORDER BY id ASC').all()).results as unknown as GroupRow[];
+}
+export async function createGroup(db: D1Database, name: string, description: string, color: string): Promise<number> {
+  const info = await db.prepare('INSERT INTO groups (name, description, color, created_at) VALUES (?, ?, ?, ?)').bind(name, description, color, Date.now()).run();
+  return Number(info.meta.last_row_id);
+}
+export async function updateGroup(db: D1Database, id: number, name: string, description: string, color: string): Promise<void> {
+  await db.prepare('UPDATE groups SET name = ?, description = ?, color = ? WHERE id = ?').bind(name, description, color, id).run();
+}
+export async function deleteGroup(db: D1Database, id: number): Promise<void> {
+  await db.prepare('DELETE FROM groups WHERE id = ?').bind(id).run();
+  await db.prepare('DELETE FROM user_groups WHERE group_id = ?').bind(id).run();
+}
+export async function getUserGroups(db: D1Database, userId: number): Promise<GroupRow[]> {
+  return (await db.prepare('SELECT g.id, g.name, g.description, g.color FROM groups g JOIN user_groups ug ON ug.group_id = g.id WHERE ug.user_id = ? ORDER BY g.id ASC').bind(userId).all()).results as unknown as GroupRow[];
+}
+export async function getGroupsByUserIds(db: D1Database, userIds: number[]): Promise<Record<number, GroupRow[]>> {
+  const uniq = Array.from(new Set(userIds.filter((i) => i > 0)));
+  const map: Record<number, GroupRow[]> = {};
+  if (!uniq.length) return map;
+  const rows = (await db.prepare('SELECT ug.user_id, g.id, g.name, g.description, g.color FROM groups g JOIN user_groups ug ON ug.group_id = g.id WHERE ug.user_id IN (' + uniq.map(() => '?').join(',') + ')').bind(...uniq).all()).results as unknown as { user_id: number; id: number; name: string; description: string; color: string }[];
+  for (const r of rows) {
+    if (!map[r.user_id]) map[r.user_id] = [];
+    map[r.user_id].push({ id: r.id, name: r.name, description: r.description, color: r.color });
+  }
+  return map;
+}
+export async function setUserGroups(db: D1Database, userId: number, groupIds: number[]): Promise<void> {
+  await db.prepare('DELETE FROM user_groups WHERE user_id = ?').bind(userId).run();
+  for (const gid of Array.from(new Set(groupIds.filter((i) => i > 0)))) {
+    await db.prepare('INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?, ?)').bind(userId, gid).run();
+  }
+}
+export async function getGroupMemberIds(db: D1Database, groupId: number): Promise<number[]> {
+  const rows = (await db.prepare('SELECT user_id FROM user_groups WHERE group_id = ?').bind(groupId).all()).results as unknown as { user_id: number }[];
+  return rows.map((r) => r.user_id);
 }

@@ -96,6 +96,8 @@ app.get('/api/settings', async (c) => {
     resend_from: s.resend_from || '',
     theme_css: s.theme_css || '',
     theme_name: s.theme_name || '',
+    invite_required: s.invite_required === '1',
+    ws_note: s.ws_note || '',
   });
 });
 
@@ -159,8 +161,20 @@ app.post('/api/auth/register', async (c) => {
   if (existU) return fail('用户名已被占用');
   if (existE) return fail('邮箱已被注册');
 
+  // 邀请码注册：开启后必须提供有效邀请码
+  const inviteRequired = await db.isInviteRequired(c.env.DB);
+  let inviteCodeUsed: string | null = null;
+  if (inviteRequired) {
+    const code = String(b.invite_code || '').trim();
+    if (!code) return fail('当前站点开启邀请码注册，请填写邀请码');
+    const v = await db.validateInviteCode(c.env.DB, code);
+    if (!v.ok) return fail(v.reason || '邀请码无效');
+    inviteCodeUsed = code;
+  }
+
   const passHash = await hashPassword(password);
   const id = await db.createUser(c.env.DB, { username, email, passHash });
+  if (inviteCodeUsed) await db.useInviteCode(c.env.DB, inviteCodeUsed, id);
   await runHook('user:registered', c, { userId: id, username, email });
 
   const verifyEnabled = (await db.getSetting(c.env.DB, 'email_verify_enabled')) === '1';
@@ -260,23 +274,34 @@ app.get('/api/search', async (c) => {
   return ok({ threads: threadsRes, users });
 });
 
-// 帖子列表（支持 board / 搜索 / 分页）
-// 性能：一次性批量取作者 / 回复数 / 板块名，避免逐帖 N+1 往返 D1。
+// 帖子列表（支持 board / 搜索 / 标签筛选 / 分页）
+// 性能：一次性批量取作者 / 回复数 / 板块名 / 标签 / 群组 / 引用 / 表情，避免逐帖 N+1 往返 D1。
 app.get('/api/threads', async (c) => {
   const boardId = c.req.query('board') ? Number(c.req.query('board')) : undefined;
   const q = c.req.query('q') || undefined;
+  const tag = c.req.query('tag') ? Number(c.req.query('tag')) : undefined;
   const page = c.req.query('page') ? Number(c.req.query('page')) : 1;
-  const threads = await db.listThreads(c.env.DB, { boardId, q, page });
+  let threads;
+  if (tag) threads = await db.listThreadsByTag(c.env.DB, tag, page);
+  else threads = await db.listThreads(c.env.DB, { boardId, q, page });
   const ids = threads.map((t) => t.id);
+  const me = user(c);
   const authorMap = await db.getUsersByIds(c.env.DB, threads.map((t) => t.user_id));
   const replyMap = await db.getReplyCountsByThreads(c.env.DB, ids);
   const boardMap = await db.getBoardNamesByIds(c.env.DB, threads.map((t) => t.board_id));
+  const tagMap = await db.getTagsByThreadIds(c.env.DB, ids);
+  const groupMap = await db.getGroupsByUserIds(c.env.DB, threads.map((t) => t.user_id));
+  const quoteMap = await db.getQuotedThreads(c.env.DB, threads.map((t) => t.quote_thread_id));
+  const reactMap = await db.getReactionSummaries(c.env.DB, 'thread', ids, me ? me.id : null);
   const withMeta = threads.map((t) => {
     const a = authorMap[t.user_id];
     return publicThread(t, {
-      author: a ? { username: a.username, avatar: a.avatar, level: db.levelFromExp(a.exp) } : null,
+      author: a ? { username: a.username, avatar: a.avatar, level: db.levelFromExp(a.exp), groups: groupMap[a.id] || [] } : null,
       reply_count: replyMap[t.id] || 0,
       board_name: boardMap[t.board_id] || '',
+      tags: tagMap[t.id] || [],
+      quote_thread: t.quote_thread_id ? (quoteMap[t.quote_thread_id] || null) : null,
+      reactions: reactMap[t.id] || {},
     });
   });
   return ok({ threads: withMeta });
@@ -292,19 +317,34 @@ app.get('/api/threads/:id', async (c) => {
   const author = await db.getUserById(c.env.DB, t.user_id);
   const replies = await db.listReplies(c.env.DB, id);
   const replyAuthorMap = await db.getUsersByIds(c.env.DB, replies.map((r) => r.user_id));
-  const replyUsers = replies.map((r) => {
-    const u = replyAuthorMap[r.user_id];
-    return { ...r, author: u ? { username: u.username, avatar: u.avatar, level: db.levelFromExp(u.exp) } : null };
-  });
   const b = (await c.env.DB.prepare('SELECT name FROM boards WHERE id = ?').bind(t.board_id).first<{ name: string }>());
   const liked = me ? await db.isLiked(c.env.DB, me.id, 'thread', t.id) : false;
   const likes = await db.countLikes(c.env.DB, 'thread', t.id);
+  const threadTags = await db.getTagsByThreadIds(c.env.DB, [t.id]);
+  const threadGroups = await db.getGroupsByUserIds(c.env.DB, [t.user_id]);
+  const threadQuote = t.quote_thread_id ? (await db.getQuotedThreads(c.env.DB, [t.quote_thread_id]))[t.quote_thread_id] || null : null;
+  const threadReactions = (await db.getReactionSummaries(c.env.DB, 'thread', [t.id], me ? me.id : null))[t.id] || {};
+  const replyGroups = await db.getGroupsByUserIds(c.env.DB, replies.map((r) => r.user_id));
+  const replyQuotes = await db.getQuotedReplies(c.env.DB, replies.map((r) => r.quote_reply_id));
+  const replyReactions = await db.getReactionSummaries(c.env.DB, 'reply', replies.map((r) => r.id), me ? me.id : null);
+  const replyUsers = replies.map((r) => {
+    const u = replyAuthorMap[r.user_id];
+    return {
+      ...r,
+      author: u ? { username: u.username, avatar: u.avatar, level: db.levelFromExp(u.exp), groups: (replyGroups[u.id] || []) } : null,
+      quote_reply: r.quote_reply_id ? (replyQuotes[r.quote_reply_id] || null) : null,
+      reactions: replyReactions[r.id] || {},
+    };
+  });
   return ok({
     thread: publicThread(t, {
-      author: author ? { username: author.username, avatar: author.avatar, level: db.levelFromExp(author.exp), bio: author.bio } : null,
+      author: author ? { username: author.username, avatar: author.avatar, level: db.levelFromExp(author.exp), bio: author.bio, groups: threadGroups[t.user_id] || [] } : null,
       board_name: b ? b.name : '',
       likes,
       liked,
+      tags: threadTags[t.id] || [],
+      quote_thread: threadQuote,
+      reactions: threadReactions,
     }),
     replies: replyUsers,
   });
@@ -330,6 +370,26 @@ app.post('/api/threads/:id/like', async (c) => {
   await runHook('thread:liked', c, { threadId: id, liked: !now, byUserId: me.id, userId: t.user_id });
   return ok({ liked: !now, likes });
 });
+
+// QQ 式表情回应：服务端固定允许列表，与前端选择器保持一致
+const ALLOWED_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '👏', '🎉', '💯', '🤔', '😡', '🥳'];
+
+// 表情回应（QQ 式）：对帖子 / 回复切换某个 emoji，返回该目标最新的表情聚合
+app.post('/api/reactions', async (c) => {
+  const me = user(c);
+  if (!me) return fail('请先登录', 401);
+  const b = await readJson(c);
+  const targetType = b.target_type === 'reply' ? 'reply' : 'thread';
+  const targetId = Number(b.target_id);
+  const emoji = String(b.emoji || '').trim();
+  if (!targetId) return fail('缺少目标');
+  if (!ALLOWED_EMOJIS.includes(emoji)) return fail('表情不在允许列表');
+  const { reacted } = await db.toggleReaction(c.env.DB, me.id, targetType, targetId, emoji);
+  const summary = (await db.getReactionSummaries(c.env.DB, targetType, [targetId], me.id))[targetId] || {};
+  await broadcastWS(c.env, 'reaction:new', { targetType, targetId, summary, userId: me.id, reacted, emoji });
+  return ok({ reacted, summary });
+});
+
 app.post('/api/threads', async (c) => {
   const u = user(c);
   if (!u) return fail('请先登录', 401);
@@ -344,7 +404,8 @@ app.post('/api/threads', async (c) => {
   if (body.length > 950000) return fail('内容过大（含媒体超过 D1 约 1MB 上限），请压缩视频或缩短正文', 413);
   const board = await c.env.DB.prepare('SELECT id FROM boards WHERE id = ?').bind(boardId).first();
   if (!board) return fail('板块不存在');
-  const id = await db.createThread(c.env.DB, { boardId, userId: u.id, title, body });
+  const quoteThreadId = Number(b.quote_thread_id) || 0;
+  const id = await db.createThread(c.env.DB, { boardId, userId: u.id, title, body, quoteThreadId });
   await db.addExp(c.env.DB, u.id, 10); // 发帖 +10 经验
   await broadcastWS(c.env, 'thread:new', { id, title, boardId, author: u.username });
   await runHook('thread:created', c, { threadId: id, title, boardId, author: u.username, userId: u.id });
@@ -374,7 +435,8 @@ app.post('/api/threads/:id/replies', async (c) => {
   const b = await readJson(c);
   const body = String(b.body || '').trim();
   if (body.length < 1) return fail('回复内容不能为空');
-  await db.createReply(c.env.DB, { threadId: id, userId: u.id, body });
+  const quoteReplyId = Number(b.quote_reply_id) || 0;
+  await db.createReply(c.env.DB, { threadId: id, userId: u.id, body, quoteReplyId });
   await db.addExp(c.env.DB, u.id, 5); // 回复 +5 经验
   await broadcastWS(c.env, 'reply:new', { threadId: id, author: u.username });
   await runHook('reply:created', c, { threadId: id, author: u.username, userId: u.id });
@@ -399,6 +461,7 @@ app.get('/api/users/:username', async (c) => {
       following: await db.countFollowing(c.env.DB, u.id),
       likes: await db.countLikesReceived(c.env.DB, u.id),
       is_following: isFollowing,
+      groups: await db.getUserGroups(c.env.DB, u.id),
     },
     threads: threads.map((t) => publicThread(t, { board_name: '' })),
   });
@@ -525,7 +588,44 @@ app.get('/api/admin/stats', async (c) => {
   const threads = (await c.env.DB.prepare('SELECT COUNT(*) c FROM threads WHERE deleted=0').first<{ c: number }>())?.c ?? 0;
   const replies = (await c.env.DB.prepare('SELECT COUNT(*) c FROM replies WHERE deleted=0').first<{ c: number }>())?.c ?? 0;
   const banned = (await c.env.DB.prepare('SELECT COUNT(*) c FROM users WHERE banned=1').first<{ c: number }>())?.c ?? 0;
-  return ok({ users, threads, replies, banned });
+  const groups = (await c.env.DB.prepare('SELECT COUNT(*) c FROM groups').first<{ c: number }>())?.c ?? 0;
+  const tags = (await c.env.DB.prepare('SELECT COUNT(*) c FROM tags').first<{ c: number }>())?.c ?? 0;
+  const inviteTotal = (await c.env.DB.prepare('SELECT COUNT(*) c FROM invite_codes').first<{ c: number }>())?.c ?? 0;
+  const inviteUsed = (await c.env.DB.prepare('SELECT COUNT(*) c FROM invite_codes WHERE uses > 0').first<{ c: number }>())?.c ?? 0;
+  const messages = (await c.env.DB.prepare('SELECT COUNT(*) c FROM messages').first<{ c: number }>())?.c ?? 0;
+  return ok({ users, threads, replies, banned, groups, tags, invite_total: inviteTotal, invite_used: inviteUsed, messages });
+});
+
+// 数据全景：最近 N 天的新增趋势 + 各板块帖子分布（供后台图表面板）
+app.get('/api/admin/analytics', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const days = Math.min(30, Math.max(7, Number(c.req.query('days') || 14)));
+  const start = Date.now() - days * 86400000;
+  const usersSeries = (await c.env.DB.prepare("SELECT strftime('%Y-%m-%d', created_at/1000, 'unixepoch') d, COUNT(*) c FROM users WHERE created_at >= ? GROUP BY d").bind(start).all()).results as unknown as { d: string; c: number }[];
+  const threadsSeries = (await c.env.DB.prepare("SELECT strftime('%Y-%m-%d', created_at/1000, 'unixepoch') d, COUNT(*) c FROM threads WHERE created_at >= ? GROUP BY d").bind(start).all()).results as unknown as { d: string; c: number }[];
+  const repliesSeries = (await c.env.DB.prepare("SELECT strftime('%Y-%m-%d', created_at/1000, 'unixepoch') d, COUNT(*) c FROM replies WHERE created_at >= ? GROUP BY d").bind(start).all()).results as unknown as { d: string; c: number }[];
+  const byBoard = (await c.env.DB.prepare('SELECT b.name, COUNT(*) c FROM threads t JOIN boards b ON b.id = t.board_id GROUP BY b.id ORDER BY c DESC').all()).results as unknown as { name: string; c: number }[];
+  // 补齐缺失日期为 0
+  const fmt = (dt: number) => new Date(dt).toISOString().slice(0, 10);
+  const fill = (rows: { d: string; c: number }[]) => {
+    const m: Record<string, number> = {};
+    for (const r of rows) m[r.d] = r.c;
+    const out: { d: string; c: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = fmt(Date.now() - i * 86400000);
+      out.push({ d, c: m[d] || 0 });
+    }
+    return out;
+  };
+  return ok({
+    days,
+    users: fill(usersSeries),
+    threads: fill(threadsSeries),
+    replies: fill(repliesSeries),
+    by_board: byBoard,
+    invite_required: (await db.getSetting(c.env.DB, 'invite_required')) === '1',
+  });
 });
 
 // 列出 Resend 可用域名（后台填了 API 密钥后调用，用于选择发信域名）
@@ -596,6 +696,7 @@ app.post('/api/admin/settings', async (c) => {
   if (typeof b.resend_from === 'string') await db.setSetting(c.env.DB, 'resend_from', b.resend_from.trim());
   if (typeof b.email_verify_enabled === 'boolean') await db.setSetting(c.env.DB, 'email_verify_enabled', b.email_verify_enabled ? '1' : '0');
   if (typeof b.ws_endpoint === 'string') await db.setSetting(c.env.DB, 'ws_endpoint', b.ws_endpoint.trim());
+  if (typeof b.invite_required === 'boolean') await db.setSetting(c.env.DB, 'invite_required', b.invite_required ? '1' : '0');
   return ok({ ok: true });
 });
 
@@ -718,6 +819,229 @@ app.patch('/api/admin/threads/:id', async (c) => {
   if (typeof b.deleted === 'number') fields.deleted = b.deleted ? 1 : 0;
   await db.updateThread(c.env.DB, id, fields);
   return ok({ ok: true });
+});
+
+// 给帖子设置标签（全量替换）
+app.post('/api/admin/threads/:id/tags', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const id = Number(c.req.param('id'));
+  const b = await readJson(c);
+  const tagIds = Array.isArray(b.tag_ids) ? b.tag_ids.map((x: any) => Number(x)).filter((n: number) => n > 0) : [];
+  await db.setThreadTags(c.env.DB, id, tagIds);
+  return ok({ ok: true });
+});
+
+/* ============================================================
+ *  标签（管理员编辑；列表公开，增改删仅管理员）
+ * ============================================================ */
+
+app.get('/api/tags', async (c) => {
+  return ok({ tags: await db.listTags(c.env.DB) });
+});
+
+app.post('/api/admin/tags', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const b = await readJson(c);
+  const name = String(b.name || '').trim();
+  const color = String(b.color || '#0f6cbd').trim();
+  if (name.length < 1) return fail('标签名不能为空');
+  if (name.length > 20) return fail('标签名过长');
+  try {
+    const id = await db.createTag(c.env.DB, name, color);
+    return ok({ id }, 201);
+  } catch {
+    return fail('标签名已存在', 409);
+  }
+});
+
+app.patch('/api/admin/tags/:id', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const id = Number(c.req.param('id'));
+  const b = await readJson(c);
+  const name = String(b.name || '').trim();
+  const color = String(b.color || '#0f6cbd').trim();
+  if (name.length < 1) return fail('标签名不能为空');
+  try {
+    await db.updateTag(c.env.DB, id, name, color);
+    return ok({ ok: true });
+  } catch {
+    return fail('标签名已存在', 409);
+  }
+});
+
+app.delete('/api/admin/tags/:id', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  await db.deleteTag(c.env.DB, Number(c.req.param('id')));
+  return ok({ ok: true });
+});
+
+/* ============================================================
+ *  邀请码
+ * ============================================================ */
+
+function genInviteCode(): string {
+  const ab = new Uint8Array(6);
+  crypto.getRandomValues(ab);
+  const s = Array.from(ab).map((b) => b.toString(36)).join('').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8).padEnd(8, '0');
+  return 'WB-' + s;
+}
+
+// 生成邀请码（可批量）。返回生成的列表。
+app.post('/api/admin/invite/generate', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const me = user(c)!;
+  const b = await readJson(c);
+  const count = Math.min(50, Math.max(1, Number(b.count) || 1));
+  const maxUses = Math.min(100, Math.max(1, Number(b.max_uses) || 1));
+  const note = String(b.note || '').slice(0, 100);
+  const expiresInDays = b.expires_in_days ? Number(b.expires_in_days) : 0;
+  const expiresAt = expiresInDays > 0 ? Date.now() + expiresInDays * 86400000 : null;
+  const codes: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const code = genInviteCode();
+    await db.createInviteCode(c.env.DB, { code, createdBy: me.id, note, maxUses, expiresAt });
+    codes.push(code);
+  }
+  return ok({ codes }, 201);
+});
+
+app.get('/api/admin/invite', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  return ok({ codes: await db.listInviteCodes(c.env.DB) });
+});
+
+/* ============================================================
+ *  管理员群发邮件（复用 Resend）
+ * ============================================================ */
+
+app.post('/api/admin/broadcast-email', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const b = await readJson(c);
+  const subject = String(b.subject || '').trim();
+  const htmlBody = String(b.body || '').trim();
+  if (!subject) return fail('请填写邮件主题');
+  if (!htmlBody) return fail('请填写邮件内容');
+  const key = await db.getSetting(c.env.DB, 'resend_api_key');
+  const from = await db.getSetting(c.env.DB, 'resend_from');
+  if (!key || !from) return fail('尚未配置 Resend 发信（请在「邮件设置」中填写 API 密钥与发件域名）', 400);
+
+  // 收件人范围：all = 全部用户；否则按群组 groupId 筛选
+  let recipients: { email: string }[] = [];
+  if (b.scope === 'group' && b.group_id) {
+    const memberIds = await db.getGroupMemberIds(c.env.DB, Number(b.group_id));
+    if (memberIds.length) {
+      const us = await db.getUsersByIds(c.env.DB, memberIds);
+      recipients = memberIds.map((id) => us[id]).filter((u) => u && u.email).map((u) => ({ email: u.email }));
+    }
+  } else {
+    recipients = ((await c.env.DB.prepare('SELECT email FROM users').all()).results as unknown as { email: string }[]);
+  }
+  const list = recipients.filter((r) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email));
+  if (!list.length) return fail('没有可用的收件人');
+
+  const total = list.length;
+  // 用 waitUntil 异步发送，避免阻塞请求（Cloudflare 会在响应后继续跑完）
+  const sendAll = async () => {
+    let sent = 0, failed = 0;
+    for (const r of list) {
+      try {
+        const okSend = await resendSend(c, r.email, subject, htmlBody);
+        if (okSend) sent++; else failed++;
+      } catch { failed++; }
+    }
+    // 结果仅记录到服务端日志（无前端回传需求）
+    console.log('[broadcast-email] 完成：成功 ' + sent + ' / 失败 ' + failed + ' / 共 ' + total);
+  };
+  if (typeof c.executionCtx !== 'undefined' && c.executionCtx && typeof c.executionCtx.waitUntil === 'function') {
+    c.executionCtx.waitUntil(sendAll());
+  } else {
+    // 兜底：同步发（小站点可用）
+    await sendAll();
+  }
+  return ok({ ok: true, queued: true, total });
+});
+
+/* ============================================================
+ *  群组（权限分组）
+ * ============================================================ */
+
+app.get('/api/admin/groups', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  return ok({ groups: await db.listGroups(c.env.DB) });
+});
+
+app.post('/api/admin/groups', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const b = await readJson(c);
+  const name = String(b.name || '').trim();
+  const description = String(b.description || '').slice(0, 200);
+  const color = String(b.color || '#0f6cbd').trim();
+  if (name.length < 1) return fail('组名不能为空');
+  if (name.length > 20) return fail('组名过长');
+  try {
+    const id = await db.createGroup(c.env.DB, name, description, color);
+    return ok({ id }, 201);
+  } catch {
+    return fail('组名已存在', 409);
+  }
+});
+
+app.patch('/api/admin/groups/:id', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const id = Number(c.req.param('id'));
+  const b = await readJson(c);
+  const name = String(b.name || '').trim();
+  const description = String(b.description || '').slice(0, 200);
+  const color = String(b.color || '#0f6cbd').trim();
+  if (name.length < 1) return fail('组名不能为空');
+  try {
+    await db.updateGroup(c.env.DB, id, name, description, color);
+    return ok({ ok: true });
+  } catch {
+    return fail('组名已存在', 409);
+  }
+});
+
+app.delete('/api/admin/groups/:id', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  await db.deleteGroup(c.env.DB, Number(c.req.param('id')));
+  return ok({ ok: true });
+});
+
+// 用户管理：支持批量设置所属群组
+app.patch('/api/admin/users/:id', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const id = Number(c.req.param('id'));
+  const b = await readJson(c);
+  const fields: Record<string, unknown> = {};
+  if (typeof b.banned === 'number') fields.banned = b.banned ? 1 : 0;
+  if (b.role === 'user' || b.role === 'admin') fields.role = b.role;
+  await db.updateUser(c.env.DB, id, fields);
+  if (Array.isArray(b.group_ids)) {
+    await db.setUserGroups(c.env.DB, id, b.group_ids.map((x: any) => Number(x)).filter((n: number) => n > 0));
+  }
+  return ok({ ok: true });
+});
+
+// 用户列表（附带群组）
+app.get('/api/admin/users', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const users = await db.listUsers(c.env.DB);
+  const groupMap = await db.getGroupsByUserIds(c.env.DB, users.map((u) => u.id));
+  return ok({ users: users.map((u) => ({ ...db.toPublicUser(u), groups: groupMap[u.id] || [] })) });
 });
 
 /* ============================================================

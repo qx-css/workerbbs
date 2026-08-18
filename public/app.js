@@ -67,6 +67,76 @@
       : '<span class="' + cls + '"' + attr + '>' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
   }
 
+  /* ===== 表情 / 引用 / 标签 / 群组 渲染助手 ===== */
+  const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '👏', '🎉', '💯', '🤔', '😡', '🥳'];
+
+  function tagChip(tg) {
+    return '<a class="tag-chip" data-tag="' + tg.id + '" style="--tc:' + esc(tg.color || '#0f6cbd') + '">' + esc(tg.name) + '</a>';
+  }
+  function groupBadgesHTML(groups) {
+    if (!groups || !groups.length) return '';
+    return '<span class="grp-badges">' + groups.map((g) => '<span class="grp-badge" style="--gc:' + esc(g.color || '#0f6cbd') + '">' + esc(g.name) + '</span>').join('') + '</span>';
+  }
+  function quotedThreadHTML(q) {
+    if (!q) return '';
+    return '<div class="quoted-card"><div class="quoted-head">引用了 <a href="#/thread/' + q.id + '">#' + q.id + ' ' + esc(q.title || '') + '</a></div>'
+      + '<div class="quoted-sub">by ' + esc(q.author || '未知') + '</div></div>';
+  }
+  function quotedReplyHTML(q) {
+    if (!q) return '';
+    return '<div class="quoted-reply"><div class="quoted-name">' + esc(q.author || '未知') + ' 说：</div>'
+      + '<div class="quoted-body">' + esc((q.body || '').slice(0, 140)) + '</div></div>';
+  }
+  function reactionsHTML(summary) {
+    const entries = Object.keys(summary || {}).filter((e) => summary[e] && summary[e].count > 0);
+    return entries.map((e) => {
+      const s = summary[e];
+      return '<button class="react-chip' + (s.mine ? ' mine' : '') + '" data-emoji="' + esc(e) + '">' + e + ' <span class="rcount">' + s.count + '</span></button>';
+    }).join('');
+  }
+  function reactionBarHTML(targetType, id, summary) {
+    return '<div class="react-bar" data-type="' + targetType + '" data-id="' + id + '">'
+      + reactionsHTML(summary)
+      + '<button class="react-add" title="表情回应">' + WI('emoji', 16) + '</button></div>';
+  }
+  async function doReaction(targetType, id, emoji) {
+    try {
+      const d = await api('/api/reactions', { method: 'POST', body: JSON.stringify({ target_type: targetType, target_id: id, emoji }) });
+      updateReactionBar(targetType, id, d.summary);
+    } catch (e) { /* 忽略瞬时错误 */ }
+  }
+  function updateReactionBar(targetType, id, summary) {
+    const bar = content.querySelector('.react-bar[data-type="' + targetType + '"][data-id="' + id + '"]');
+    if (!bar) return;
+    bar.innerHTML = reactionsHTML(summary) + '<button class="react-add" title="表情回应">' + WI('emoji', 16) + '</button>';
+  }
+  let reactPicker = null;
+  function closeReactionPicker() {
+    if (reactPicker) { reactPicker.remove(); reactPicker = null; }
+    document.removeEventListener('click', closeReactionPickerOnce);
+  }
+  function closeReactionPickerOnce(e) { if (reactPicker && !reactPicker.contains(e.target)) closeReactionPicker(); }
+  function openReactionPicker(anchorBtn, targetType, id) {
+    closeReactionPicker();
+    const pop = document.createElement('div');
+    pop.className = 'react-pop';
+    pop.innerHTML = REACTIONS.map((e) => '<button class="react-opt" data-emoji="' + e + '">' + e + '</button>').join('');
+    document.body.appendChild(pop);
+    reactPicker = pop;
+    const r = anchorBtn.getBoundingClientRect();
+    const pw = pop.offsetWidth, ph = pop.offsetHeight;
+    let left = Math.min(window.innerWidth - pw - 8, r.left);
+    if (left < 8) left = 8;
+    let top = r.top - ph - 8;
+    if (top < 8) top = r.bottom + 8;
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    pop.querySelectorAll('.react-opt').forEach((b) => {
+      b.onclick = async () => { closeReactionPicker(); await doReaction(targetType, id, b.dataset.emoji); };
+    });
+    setTimeout(() => document.addEventListener('click', closeReactionPickerOnce), 0);
+  }
+
   /* ===== 全局加载指示（顶部进度条）===== */
   let __load = 0;
   let __bar = null;
@@ -195,15 +265,21 @@
     return '<article class="post-card" data-id="' + t.id + '">'
       + '<span class="post-tag">' + esc(t.board_name || '') + '</span>'
       + '<h3 class="post-title">' + esc(t.title) + '</h3>'
+      + (t.quote_thread ? quotedThreadHTML(t.quote_thread) : '')
+      + (t.tags && t.tags.length ? '<div class="tags">' + t.tags.map(tagChip).join('') + '</div>' : '')
       + '<p class="post-snippet">' + esc(htmlToText(t.body).slice(0, 120)) + '</p>'
       + '<div class="post-meta">'
       + avatarHTML(a)
       + '<span class="name" data-user="' + esc(a.username || '') + '">' + esc(a.username || '匿名') + '</span>'
+      + groupBadgesHTML(a.groups)
       + (a.level ? '<span class="lvl">Lv.' + a.level + '</span>' : '')
       + '<span class="dot"></span><span>' + esc(timeAgo(t.created_at)) + '</span>'
       + '<span class="right"><span><span class="meta-ico">' + WI('comment', 14) + '</span>回复 ' + (t.reply_count || 0) + '</span>'
       + '<span><span class="meta-ico">' + WI('eye', 14) + '</span>浏览 ' + t.views + '</span></span>'
-      + '</div></article>';
+      + '<span class="quote-act" data-quote-thread="' + t.id + '" title="引用这篇帖子">' + WI('quote', 14) + ' 引用</span>'
+      + '</div>'
+      + (t.reactions ? reactionBarHTML('thread', t.id, t.reactions) : '')
+      + '</article>';
   }
 
   // 搜索结果里的用户行
@@ -211,12 +287,23 @@
     const bio = (u.bio && u.bio !== DEFAULT_BIO) ? u.bio : '这个人很神秘';
     return '<div class="user-row" data-user="' + esc(u.username) + '">'
       + avatarHTML(u)
-      + '<div class="u-main"><div class="u-name">' + esc(u.username) + (u.level ? ' <span class="lvl">Lv.' + u.level + '</span>' : '') + '</div>'
+      + '<div class="u-main"><div class="u-name">' + esc(u.username) + (u.level ? ' <span class="lvl">Lv.' + u.level + '</span>' : '') + groupBadgesHTML(u.groups) + '</div>'
       + '<div class="u-bio muted">' + esc(bio) + '</div></div></div>';
   }
 
   // 全局委托：点击头像 → 进入该用户主页（优先于帖子卡片跳转）
   content.addEventListener('click', (e) => {
+    // 表情回应：打开选择器 / 切换已有表情
+    const ra = e.target.closest('.react-add');
+    if (ra) { const bar = ra.closest('.react-bar'); if (bar) openReactionPicker(ra, bar.dataset.type, bar.dataset.id); return; }
+    const rc = e.target.closest('.react-chip');
+    if (rc) { const bar = rc.closest('.react-bar'); if (bar) doReaction(bar.dataset.type, bar.dataset.id, rc.dataset.emoji); return; }
+    // 标签筛选
+    const tg = e.target.closest('[data-tag]');
+    if (tg) { e.preventDefault(); e.stopPropagation(); location.hash = '#/home?tag=' + tg.dataset.tag; return; }
+    // 引用帖子 → 进入带引用的发帖页
+    const qt = e.target.closest('[data-quote-thread]');
+    if (qt) { e.preventDefault(); e.stopPropagation(); location.hash = '#/compose?quote=' + qt.dataset.quoteThread; return; }
     const av = e.target.closest('.avatar.clickable');
     if (av && av.dataset.user) {
       e.preventDefault(); e.stopPropagation();
@@ -235,14 +322,20 @@
 
   /* ===== 视图 ===== */
   async function viewHome() {
-    const data = await api('/api/threads');
+    const tm = location.hash.match(/[?&]tag=(\d+)/);
+    const tagId = tm ? Number(tm[1]) : 0;
+    const data = await api('/api/threads' + (tagId ? '?tag=' + tagId : ''));
+    let tagName = '';
+    if (tagId) { try { const tg = await api('/api/tags'); const f = (tg.tags || []).find((x) => x.id === tagId); tagName = f ? f.name : ''; } catch (e) {} }
     const feed = data.threads.length ? data.threads.map(threadCard).join('') : '<div class="empty">还没有帖子，去发一帖吧</div>';
     content.innerHTML =
       '<div class="appbar"><h1>' + esc(SETTINGS.site_name || 'WorkerBBS') + '</h1><span class="spacer"></span>'
       + (ME ? '<button class="btn primary" id="newPost">+ 发布</button>' : loginBtn()) + '</div>'
+      + (tagId ? '<div class="tag-filter"><span class="tf-label">标签：<b style="color:var(--accent)">' + esc(tagName || ('#' + tagId)) + '</b></span><button class="btn" id="clearTag">清除筛选</button></div>' : '')
       + '<div class="content-inner"><div class="feed">' + feed + '</div></div>';
     const b = document.getElementById('newPost'); if (b) b.onclick = () => (location.hash = '#/compose');
     const lb = document.getElementById('loginBtn'); if (lb) lb.onclick = openAuth;
+    const ct = document.getElementById('clearTag'); if (ct) ct.onclick = () => (location.hash = '#/home');
   }
 
   async function viewDiscover() {
@@ -291,12 +384,17 @@
 
   async function viewCompose() {
     if (!ME) { openAuth(); return; }
+    const qm = location.hash.match(/\?quote=(\d+)/);
+    const quoteThreadId = qm ? Number(qm[1]) : 0;
+    let quoted = null;
+    if (quoteThreadId) { try { const qd = await api('/api/threads/' + quoteThreadId); quoted = { id: qd.thread.id, title: qd.thread.title, author: qd.thread.author ? qd.thread.author.username : '' }; } catch (e) {} }
     const opts = BOARDS.map((b) => '<option value="' + b.id + '">' + esc(b.name) + '</option>').join('');
     const tb = (cmd, title) => '<button type="button" class="rte-btn" data-cmd="' + cmd + '" title="' + title + '">' + WI(cmd, 18) + '</button>';
     const sep = '<span class="rte-sep"></span>';
     content.innerHTML =
       '<div class="appbar"><button class="btn" id="backBtn">' + WI('chevronLeft', 18) + ' 返回</button><h1>发帖</h1><span class="spacer"></span></div>'
       + '<div class="content-inner"><div class="compose">'
+      + (quoted ? '<div class="quoted-card" style="margin-bottom:14px;">' + quotedThreadHTML(quoted) + '</div>' : '')
       + '<label>板块</label><select id="cBoard">' + opts + '</select>'
       + '<label>标题</label><input id="cTitle" placeholder="一句话说清楚" />'
       + '<label>正文</label>'
@@ -343,7 +441,7 @@
       if (!text.trim()) { err.textContent = '正文不能为空'; return; }
       if (new Blob([html]).size > 950000) { err.textContent = '内容过大（含媒体超过 D1 约 1MB 上限），请压缩视频或缩短正文'; return; }
       try {
-        const d = await api('/api/threads', { method: 'POST', body: JSON.stringify({ board_id: boardId, title, body: html }) });
+        const d = await api('/api/threads', { method: 'POST', body: JSON.stringify({ board_id: boardId, title, body: html, quote_thread_id: quoteThreadId }) });
         location.hash = '#/thread/' + d.id;
       } catch (e) { err.textContent = e.message; }
     };
@@ -370,31 +468,44 @@
     const data = await api('/api/threads/' + id);
     const t = data.thread;
     const a = t.author || {};
-    const replies = data.replies.map((r) => {
+    const rawReplies = data.replies;
+    let pendingQuoteReply = 0;
+    const repliesHTML = rawReplies.map((r) => {
       const ra = r.author || {};
-      return '<div class="reply-card">' + avatarHTML(ra)
+      return '<div class="reply-card" data-rid="' + r.id + '">' + avatarHTML(ra)
         + '<div class="reply-main"><div class="reply-head"><span class="name" data-user="' + esc(ra.username || '') + '">' + esc(ra.username || '匿名') + '</span>'
-        + (ra.level ? '<span class="lvl">Lv.' + ra.level + '</span>' : '') + '<span class="dot"></span><span>' + esc(timeAgo(r.created_at)) + '</span></div>'
-        + '<div class="reply-text">' + esc(r.body) + '</div></div></div>';
+        + groupBadgesHTML(ra.groups)
+        + (ra.level ? '<span class="lvl">Lv.' + ra.level + '</span>' : '') + '<span class="dot"></span><span>' + esc(timeAgo(r.created_at)) + '</span>'
+        + '<span class="reply-quote-act" data-quote-reply="' + r.id + '" title="引用这条回复">' + WI('quote', 14) + ' 引用</span></div>'
+        + (r.quote_reply ? quotedReplyHTML(r.quote_reply) : '')
+        + '<div class="reply-text">' + esc(r.body) + '</div>'
+        + (r.reactions ? reactionBarHTML('reply', r.id, r.reactions) : '')
+        + '</div></div>';
     }).join('');
+    const replyCount = rawReplies.length;
     content.innerHTML =
       '<div class="appbar"><button class="btn" id="backBtn">' + WI('chevronLeft', 18) + ' 返回</button><h1 style="font-size:15px;">' + esc(t.board_name) + '</h1><span class="spacer"></span></div>'
       + '<div class="content-inner">'
       + '<article class="post-detail"><span class="post-tag">' + esc(t.board_name) + '</span>'
       + '<h2 class="post-title">' + esc(t.title) + '</h2>'
+      + (t.quote_thread ? quotedThreadHTML(t.quote_thread) : '')
+      + (t.tags && t.tags.length ? '<div class="tags">' + t.tags.map(tagChip).join('') + '</div>' : '')
       + '<div class="post-meta" style="margin-bottom:14px;">' + avatarHTML(a)
       + '<a class="name" href="#/user/' + esc(a.username || '') + '">' + esc(a.username || '匿名') + '</a>'
+      + groupBadgesHTML(a.groups)
       + (a.level ? '<span class="lvl">Lv.' + a.level + '</span>' : '') + '<span class="dot"></span><span>' + esc(timeAgo(t.created_at)) + '</span>'
-      + '<span class="right"><span><span class="meta-ico">' + WI('comment', 14) + '</span>回复 ' + (data.replies.length) + '</span>'
+      + '<span class="right"><span><span class="meta-ico">' + WI('comment', 14) + '</span>回复 ' + replyCount + '</span>'
       + '<span><span class="meta-ico">' + WI('eye', 14) + '</span>浏览 ' + t.views + '</span></span></div>'
       + '<div class="post-body">' + renderBody(t.body) + '</div>'
       + '<div class="like-bar"><button class="like-btn' + (t.liked ? ' liked' : '') + '" id="likeBtn">'
       + WI(t.liked ? 'heartFill' : 'heart', 18)
       + ' <span id="likeCount">' + (t.likes || 0) + '</span> 赞</button></div>'
+      + (t.reactions ? reactionBarHTML('thread', t.id, t.reactions) : '')
       + '</article>'
-      + '<h3 style="font-size:14px;margin:22px 0 6px;color:var(--text-2);">' + data.replies.length + ' 条回复</h3>'
-      + '<div class="replies" id="reps">' + (replies || '<div class="empty">还没有回复，来抢沙发</div>') + '</div>'
-      + (ME ? '<div class="reply-box"><input id="replyInput" placeholder="写下你的回复…" /><button class="btn primary" id="sendReply">' + WI('send', 16) + ' 发送</button></div>'
+      + '<h3 style="font-size:14px;margin:22px 0 6px;color:var(--text-2);">' + replyCount + ' 条回复</h3>'
+      + '<div class="replies" id="reps">' + (repliesHTML || '<div class="empty">还没有回复，来抢沙发</div>') + '</div>'
+      + (ME ? '<div class="reply-box"><div id="quotePreview" class="quote-preview" hidden></div>'
+            + '<input id="replyInput" placeholder="写下你的回复…" /><button class="btn primary" id="sendReply">' + WI('send', 16) + ' 发送</button></div>'
             : '<div class="muted" style="margin-top:14px;">登录后才能回复 · <a href="#" id="loginLink">去登录</a></div>')
       + '</div>';
     document.getElementById('backBtn').onclick = () => history.length > 1 ? history.back() : (location.hash = '#/home');
@@ -405,7 +516,8 @@
       const txt = inp.value.trim();
       if (!txt) return;
       try {
-        await api('/api/threads/' + id + '/replies', { method: 'POST', body: JSON.stringify({ body: txt }) });
+        await api('/api/threads/' + id + '/replies', { method: 'POST', body: JSON.stringify({ body: txt, quote_reply_id: pendingQuoteReply }) });
+        pendingQuoteReply = 0;
         viewThread(id);
       } catch (e) { alert(e.message); }
     };
@@ -418,6 +530,21 @@
         lb.innerHTML = WI(d.liked ? 'heartFill' : 'heart', 18) + ' <span id="likeCount">' + d.likes + '</span> 赞';
       } catch (e) { alert(e.message); }
     };
+    content.querySelectorAll('[data-quote-reply]').forEach((btn) => {
+      btn.onclick = () => {
+        const rid = Number(btn.dataset.quoteReply);
+        pendingQuoteReply = rid;
+        const r = rawReplies.find((x) => x.id === rid);
+        const qp = document.getElementById('quotePreview');
+        if (!qp || !r) return;
+        qp.hidden = false;
+        qp.innerHTML = '引用 ' + esc(r.author ? r.author.username : '') + '：' + esc((r.body || '').slice(0, 80))
+          + ' <button class="btn" id="qClear" style="padding:2px 8px;font-size:12px;">取消</button>';
+        const qc = document.getElementById('qClear');
+        if (qc) qc.onclick = () => { pendingQuoteReply = 0; qp.hidden = true; qp.innerHTML = ''; };
+        const inp = document.getElementById('replyInput'); if (inp) inp.focus();
+      };
+    });
   }
 
   async function viewUser(username) {
@@ -434,7 +561,9 @@
       + '<div class="profile-top">'
       + avatarHTML({ username: u.username, avatar: u.avatar })
       + '<div class="profile-id"><div class="pn">' + esc(u.username) + ' <span class="lvl">Lv.' + u.level + '</span></div>'
-      + '<div class="pm">' + esc(u.bio || DEFAULT_BIO) + '</div></div>'
+      + '<div class="pm">' + esc(u.bio || DEFAULT_BIO) + '</div>'
+      + (u.groups && u.groups.length ? '<div class="grp-badges">' + u.groups.map((g) => '<span class="grp-badge" style="--gc:' + esc(g.color || '#0f6cbd') + '">' + esc(g.name) + '</span>').join('') + '</div>' : '')
+      + '</div>'
       + (isSelf ? '' : '<button class="btn follow-btn' + (u.is_following ? ' following' : '') + '" id="followBtn">' + WI('userAdd', 16) + ' ' + (u.is_following ? '已关注' : '关注') + '</button>'
         + '<button class="btn" id="dmBtn">' + WI('chat', 16) + ' 发私信</button>')
       + '</div>'
@@ -664,6 +793,7 @@
         (isReg ? '<label>用户名</label><input id="fUser" placeholder="至少 2 个字符">' : '')
         + '<label>邮箱或用户名</label><input id="fId" placeholder="登录用">' 
         + (isReg ? '<label>邮箱</label><input id="fEmail" placeholder="you@example.com">' : '')
+        + (isReg && SETTINGS.invite_required ? '<label>邀请码</label><input id="fInvite" placeholder="必填，向管理员索取">' : '')
         + '<label>密码</label><input id="fPwd" type="password" placeholder="至少 6 位">'
         + '<div class="row"><button class="btn primary" id="fSubmit" style="flex:1;">' + (isReg ? '注册' : '登录') + '</button></div>';
       document.getElementById('fSubmit').onclick = submit;
@@ -672,10 +802,16 @@
       const err = document.getElementById('authErr'); err.textContent = '';
       try {
         if (mode === 'register') {
-          const r = await api('/api/auth/register', { method: 'POST', body: JSON.stringify({
+          const body = {
             username: document.getElementById('fUser').value.trim(),
             email: document.getElementById('fEmail').value.trim(),
-            password: document.getElementById('fPwd').value }) });
+            password: document.getElementById('fPwd').value,
+          };
+          if (SETTINGS.invite_required) {
+            const inv = document.getElementById('fInvite');
+            body.invite_code = inv ? inv.value.trim() : '';
+          }
+          const r = await api('/api/auth/register', { method: 'POST', body: JSON.stringify(body) });
           if (r.needsVerification) {
             closeAuth();
             alert('注册成功！验证邮件已发送至 ' + r.email + '，请查收并完成邮箱验证后再登录。');
@@ -740,6 +876,9 @@
         const cur = decodeURIComponent((location.hash.split('/')[2] || ''));
         if (cur === p.fromUsername) setTimeout(() => { try { viewConversation(p.fromUsername); } catch {} }, 500);
       }
+    } else if (m.type === 'reaction:new') {
+      const p = m.payload || {};
+      if (p.targetType && p.targetId) updateReactionBar(p.targetType, p.targetId, p.summary || {});
     }
   }
 

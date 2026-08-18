@@ -334,6 +334,38 @@
   @media (prefers-reduced-motion: reduce) {
     *, .selector, .nav-toggle, .nav-item { animation: none !important; transition: none !important; }
   }
+  /* ===== 表情回应（QQ 式） ===== */
+  .react-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center; }
+  .react-chip { font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); padding: 3px 9px; border-radius: 999px; cursor: pointer; transition: background .15s; }
+  .react-chip:hover { background: var(--hover); }
+  .react-chip.mine { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .react-chip .rcount { opacity: .7; font-size: 11px; margin-left: 2px; }
+  .react-add { font: inherit; border: 1px dashed var(--border); background: transparent; color: var(--text-2); width: 30px; height: 28px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+  .react-add:hover { color: var(--accent); border-color: var(--accent); }
+  .react-pop { position: fixed; z-index: 1000; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; max-width: 252px; }
+  .react-opt { font-size: 20px; border: none; background: transparent; cursor: pointer; border-radius: 8px; padding: 4px; line-height: 1; }
+  .react-opt:hover { background: var(--hover); }
+
+  /* ===== 引用帖子 / 回复 ===== */
+  .quoted-card, .quoted-reply { border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-size: 13px; color: var(--text-2); }
+  .quoted-head a, .quoted-name { color: var(--accent); font-weight: 600; }
+  .quoted-sub, .quoted-body { margin-top: 2px; }
+  .quoted-body { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .quote-act, .reply-quote-act { margin-left: 10px; font-size: 12px; color: var(--text-2); cursor: pointer; opacity: .8; }
+  .quote-act:hover, .reply-quote-act:hover { color: var(--accent); opacity: 1; }
+  .reply-quote-act { float: right; }
+  .quote-preview { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; color: var(--text-2); }
+
+  /* ===== 标签 ===== */
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+  .tag-chip { font-size: 12px; padding: 2px 10px; border-radius: 999px; cursor: pointer; text-decoration: none; color: var(--tc, var(--accent)); background: color-mix(in srgb, var(--tc, var(--accent)) 14%, transparent); border: 1px solid color-mix(in srgb, var(--tc, var(--accent)) 35%, transparent); }
+  .tag-chip:hover { background: color-mix(in srgb, var(--tc, var(--accent)) 24%, transparent); }
+  .tag-filter { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; }
+  .tf-label { font-size: 13px; color: var(--text-2); }
+
+  /* ===== 群组徽章 ===== */
+  .grp-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
+  .grp-badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; color: var(--gc, var(--accent)); background: color-mix(in srgb, var(--gc, var(--accent)) 14%, transparent); border: 1px solid color-mix(in srgb, var(--gc, var(--accent)) 35%, transparent); }
 </style>
 </head>
 <body>

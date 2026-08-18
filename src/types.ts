@@ -53,6 +53,7 @@ export interface Thread {
   views: number;
   pinned: number;
   deleted: number;
+  quote_thread_id: number;
   created_at: number;
 }
 
@@ -62,5 +63,6 @@ export interface Reply {
   user_id: number;
   body: string;
   deleted: number;
+  quote_reply_id: number;
   created_at: number;
 }
