@@ -274,22 +274,18 @@ app.get('/api/search', async (c) => {
   return ok({ threads: threadsRes, users });
 });
 
-// 帖子列表（支持 board / 搜索 / 标签筛选 / 分页）
-// 性能：一次性批量取作者 / 回复数 / 板块名 / 标签 / 群组 / 引用 / 表情，避免逐帖 N+1 往返 D1。
+// 帖子列表（支持 board / 搜索 / 分页）
+// 性能：一次性批量取作者 / 回复数 / 板块名 / 群组 / 引用 / 表情，避免逐帖 N+1 往返 D1。
 app.get('/api/threads', async (c) => {
   const boardId = c.req.query('board') ? Number(c.req.query('board')) : undefined;
   const q = c.req.query('q') || undefined;
-  const tag = c.req.query('tag') ? Number(c.req.query('tag')) : undefined;
   const page = c.req.query('page') ? Number(c.req.query('page')) : 1;
-  let threads;
-  if (tag) threads = await db.listThreadsByTag(c.env.DB, tag, page);
-  else threads = await db.listThreads(c.env.DB, { boardId, q, page });
+  const threads = await db.listThreads(c.env.DB, { boardId, q, page });
   const ids = threads.map((t) => t.id);
   const me = user(c);
   const authorMap = await db.getUsersByIds(c.env.DB, threads.map((t) => t.user_id));
   const replyMap = await db.getReplyCountsByThreads(c.env.DB, ids);
   const boardMap = await db.getBoardNamesByIds(c.env.DB, threads.map((t) => t.board_id));
-  const tagMap = await db.getTagsByThreadIds(c.env.DB, ids);
   const groupMap = await db.getGroupsByUserIds(c.env.DB, threads.map((t) => t.user_id));
   const quoteMap = await db.getQuotedThreads(c.env.DB, threads.map((t) => t.quote_thread_id));
   const reactMap = await db.getReactionSummaries(c.env.DB, 'thread', ids, me ? me.id : null);
@@ -299,7 +295,6 @@ app.get('/api/threads', async (c) => {
       author: a ? { username: a.username, avatar: a.avatar, level: db.levelFromExp(a.exp), groups: groupMap[a.id] || [] } : null,
       reply_count: replyMap[t.id] || 0,
       board_name: boardMap[t.board_id] || '',
-      tags: tagMap[t.id] || [],
       quote_thread: t.quote_thread_id ? (quoteMap[t.quote_thread_id] || null) : null,
       reactions: reactMap[t.id] || {},
     });
@@ -320,7 +315,6 @@ app.get('/api/threads/:id', async (c) => {
   const b = (await c.env.DB.prepare('SELECT name FROM boards WHERE id = ?').bind(t.board_id).first<{ name: string }>());
   const liked = me ? await db.isLiked(c.env.DB, me.id, 'thread', t.id) : false;
   const likes = await db.countLikes(c.env.DB, 'thread', t.id);
-  const threadTags = await db.getTagsByThreadIds(c.env.DB, [t.id]);
   const threadGroups = await db.getGroupsByUserIds(c.env.DB, [t.user_id]);
   const threadQuote = t.quote_thread_id ? (await db.getQuotedThreads(c.env.DB, [t.quote_thread_id]))[t.quote_thread_id] || null : null;
   const threadReactions = (await db.getReactionSummaries(c.env.DB, 'thread', [t.id], me ? me.id : null))[t.id] || {};
@@ -342,7 +336,6 @@ app.get('/api/threads/:id', async (c) => {
       board_name: b ? b.name : '',
       likes,
       liked,
-      tags: threadTags[t.id] || [],
       quote_thread: threadQuote,
       reactions: threadReactions,
     }),
@@ -589,11 +582,11 @@ app.get('/api/admin/stats', async (c) => {
   const replies = (await c.env.DB.prepare('SELECT COUNT(*) c FROM replies WHERE deleted=0').first<{ c: number }>())?.c ?? 0;
   const banned = (await c.env.DB.prepare('SELECT COUNT(*) c FROM users WHERE banned=1').first<{ c: number }>())?.c ?? 0;
   const groups = (await c.env.DB.prepare('SELECT COUNT(*) c FROM groups').first<{ c: number }>())?.c ?? 0;
-  const tags = (await c.env.DB.prepare('SELECT COUNT(*) c FROM tags').first<{ c: number }>())?.c ?? 0;
+  const boards = (await c.env.DB.prepare('SELECT COUNT(*) c FROM boards').first<{ c: number }>())?.c ?? 0;
   const inviteTotal = (await c.env.DB.prepare('SELECT COUNT(*) c FROM invite_codes').first<{ c: number }>())?.c ?? 0;
   const inviteUsed = (await c.env.DB.prepare('SELECT COUNT(*) c FROM invite_codes WHERE uses > 0').first<{ c: number }>())?.c ?? 0;
   const messages = (await c.env.DB.prepare('SELECT COUNT(*) c FROM messages').first<{ c: number }>())?.c ?? 0;
-  return ok({ users, threads, replies, banned, groups, tags, invite_total: inviteTotal, invite_used: inviteUsed, messages });
+  return ok({ users, threads, replies, banned, groups, boards, invite_total: inviteTotal, invite_used: inviteUsed, messages });
 });
 
 // 数据全景：最近 N 天的新增趋势 + 各板块帖子分布（供后台图表面板）
@@ -822,60 +815,59 @@ app.patch('/api/admin/threads/:id', async (c) => {
 });
 
 // 给帖子设置标签（全量替换）
-app.post('/api/admin/threads/:id/tags', async (c) => {
-  const e = requireAdmin(c);
-  if (e) return e;
-  const id = Number(c.req.param('id'));
-  const b = await readJson(c);
-  const tagIds = Array.isArray(b.tag_ids) ? b.tag_ids.map((x: any) => Number(x)).filter((n: number) => n > 0) : [];
-  await db.setThreadTags(c.env.DB, id, tagIds);
-  return ok({ ok: true });
-});
-
 /* ============================================================
- *  标签（管理员编辑；列表公开，增改删仅管理员）
+ *  板块（管理员编辑；标签即板块，增改删仅管理员）
  * ============================================================ */
 
-app.get('/api/tags', async (c) => {
-  return ok({ tags: await db.listTags(c.env.DB) });
+app.get('/api/admin/boards', async (c) => {
+  const e = requireAdmin(c);
+  if (e) return e;
+  const boards = await db.listBoards(c.env.DB);
+  const withCount = await Promise.all(boards.map(async (b) => ({ ...b, thread_count: await db.countThreadsByBoard(c.env.DB, b.id) })));
+  return ok({ boards: withCount });
 });
 
-app.post('/api/admin/tags', async (c) => {
+app.post('/api/admin/boards', async (c) => {
   const e = requireAdmin(c);
   if (e) return e;
   const b = await readJson(c);
   const name = String(b.name || '').trim();
-  const color = String(b.color || '#0f6cbd').trim();
-  if (name.length < 1) return fail('标签名不能为空');
-  if (name.length > 20) return fail('标签名过长');
+  const description = String(b.description || '').trim();
+  const sort = Number(b.sort || 0);
+  if (name.length < 1) return fail('板块名不能为空');
+  if (name.length > 20) return fail('板块名过长');
   try {
-    const id = await db.createTag(c.env.DB, name, color);
+    const id = await db.createBoard(c.env.DB, name, description, sort);
     return ok({ id }, 201);
   } catch {
-    return fail('标签名已存在', 409);
+    return fail('板块名已存在', 409);
   }
 });
 
-app.patch('/api/admin/tags/:id', async (c) => {
+app.patch('/api/admin/boards/:id', async (c) => {
   const e = requireAdmin(c);
   if (e) return e;
   const id = Number(c.req.param('id'));
   const b = await readJson(c);
-  const name = String(b.name || '').trim();
-  const color = String(b.color || '#0f6cbd').trim();
-  if (name.length < 1) return fail('标签名不能为空');
+  const fields: { name?: string; description?: string; sort?: number } = {};
+  if (typeof b.name === 'string') { const n = b.name.trim(); if (!n) return fail('板块名不能为空'); if (n.length > 20) return fail('板块名过长'); fields.name = n; }
+  if (typeof b.description === 'string') fields.description = b.description.trim();
+  if (typeof b.sort === 'number') fields.sort = b.sort;
   try {
-    await db.updateTag(c.env.DB, id, name, color);
+    await db.updateBoard(c.env.DB, id, fields);
     return ok({ ok: true });
   } catch {
-    return fail('标签名已存在', 409);
+    return fail('板块名已存在', 409);
   }
 });
 
-app.delete('/api/admin/tags/:id', async (c) => {
+app.delete('/api/admin/boards/:id', async (c) => {
   const e = requireAdmin(c);
   if (e) return e;
-  await db.deleteTag(c.env.DB, Number(c.req.param('id')));
+  const id = Number(c.req.param('id'));
+  const cnt = await db.countThreadsByBoard(c.env.DB, id);
+  if (cnt > 0) return fail('该板块下还有 ' + cnt + ' 个帖子，无法删除（请先迁移或删除帖子）', 409);
+  await db.deleteBoard(c.env.DB, id);
   return ok({ ok: true });
 });
 

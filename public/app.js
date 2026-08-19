@@ -67,12 +67,9 @@
       : '<span class="' + cls + '"' + attr + '>' + esc(u ? u.username : '?').slice(0, 1) + '</span>';
   }
 
-  /* ===== 表情 / 引用 / 标签 / 群组 渲染助手 ===== */
+  /* ===== 表情 / 引用 / 群组 渲染助手 ===== */
   const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '👏', '🎉', '💯', '🤔', '😡', '🥳'];
 
-  function tagChip(tg) {
-    return '<a class="tag-chip" data-tag="' + tg.id + '" style="--tc:' + esc(tg.color || '#0f6cbd') + '">' + esc(tg.name) + '</a>';
-  }
   function groupBadgesHTML(groups) {
     if (!groups || !groups.length) return '';
     return '<span class="grp-badges">' + groups.map((g) => '<span class="grp-badge" style="--gc:' + esc(g.color || '#0f6cbd') + '">' + esc(g.name) + '</span>').join('') + '</span>';
@@ -266,7 +263,6 @@
       + '<span class="post-tag">' + esc(t.board_name || '') + '</span>'
       + '<h3 class="post-title">' + esc(t.title) + '</h3>'
       + (t.quote_thread ? quotedThreadHTML(t.quote_thread) : '')
-      + (t.tags && t.tags.length ? '<div class="tags">' + t.tags.map(tagChip).join('') + '</div>' : '')
       + '<p class="post-snippet">' + esc(htmlToText(t.body).slice(0, 120)) + '</p>'
       + '<div class="post-meta">'
       + avatarHTML(a)
@@ -298,9 +294,6 @@
     if (ra) { const bar = ra.closest('.react-bar'); if (bar) openReactionPicker(ra, bar.dataset.type, bar.dataset.id); return; }
     const rc = e.target.closest('.react-chip');
     if (rc) { const bar = rc.closest('.react-bar'); if (bar) doReaction(bar.dataset.type, bar.dataset.id, rc.dataset.emoji); return; }
-    // 标签筛选
-    const tg = e.target.closest('[data-tag]');
-    if (tg) { e.preventDefault(); e.stopPropagation(); location.hash = '#/home?tag=' + tg.dataset.tag; return; }
     // 引用帖子 → 进入带引用的发帖页
     const qt = e.target.closest('[data-quote-thread]');
     if (qt) { e.preventDefault(); e.stopPropagation(); location.hash = '#/compose?quote=' + qt.dataset.quoteThread; return; }
@@ -322,20 +315,14 @@
 
   /* ===== 视图 ===== */
   async function viewHome() {
-    const tm = location.hash.match(/[?&]tag=(\d+)/);
-    const tagId = tm ? Number(tm[1]) : 0;
-    const data = await api('/api/threads' + (tagId ? '?tag=' + tagId : ''));
-    let tagName = '';
-    if (tagId) { try { const tg = await api('/api/tags'); const f = (tg.tags || []).find((x) => x.id === tagId); tagName = f ? f.name : ''; } catch (e) {} }
+    const data = await api('/api/threads');
     const feed = data.threads.length ? data.threads.map(threadCard).join('') : '<div class="empty">还没有帖子，去发一帖吧</div>';
     content.innerHTML =
       '<div class="appbar"><h1>' + esc(SETTINGS.site_name || 'WorkerBBS') + '</h1><span class="spacer"></span>'
       + (ME ? '<button class="btn primary" id="newPost">+ 发布</button>' : loginBtn()) + '</div>'
-      + (tagId ? '<div class="tag-filter"><span class="tf-label">标签：<b style="color:var(--accent)">' + esc(tagName || ('#' + tagId)) + '</b></span><button class="btn" id="clearTag">清除筛选</button></div>' : '')
       + '<div class="content-inner"><div class="feed">' + feed + '</div></div>';
     const b = document.getElementById('newPost'); if (b) b.onclick = () => (location.hash = '#/compose');
     const lb = document.getElementById('loginBtn'); if (lb) lb.onclick = openAuth;
-    const ct = document.getElementById('clearTag'); if (ct) ct.onclick = () => (location.hash = '#/home');
   }
 
   async function viewDiscover() {
@@ -489,7 +476,6 @@
       + '<article class="post-detail"><span class="post-tag">' + esc(t.board_name) + '</span>'
       + '<h2 class="post-title">' + esc(t.title) + '</h2>'
       + (t.quote_thread ? quotedThreadHTML(t.quote_thread) : '')
-      + (t.tags && t.tags.length ? '<div class="tags">' + t.tags.map(tagChip).join('') + '</div>' : '')
       + '<div class="post-meta" style="margin-bottom:14px;">' + avatarHTML(a)
       + '<a class="name" href="#/user/' + esc(a.username || '') + '">' + esc(a.username || '匿名') + '</a>'
       + groupBadgesHTML(a.groups)

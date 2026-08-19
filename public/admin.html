@@ -163,7 +163,7 @@
       <button class="snav" data-panel="site">站点设置</button>
       <button class="snav" data-panel="users">用户管理</button>
       <button class="snav" data-panel="threads">帖子管理</button>
-      <button class="snav" data-panel="tags">标签</button>
+      <button class="snav" data-panel="boards">板块</button>
       <button class="snav" data-panel="invite">邀请码</button>
       <button class="snav" data-panel="broadcast">群发邮件</button>
       <button class="snav" data-panel="groups">群组</button>
@@ -316,20 +316,22 @@
           </div>
         </section>
 
-        <section class="panel" id="p-tags">
+        <section class="panel" id="p-boards">
           <div class="cols">
             <div class="card">
-              <h2>标签管理</h2>
+              <h2>板块管理</h2>
+              <p class="muted" style="margin:-4px 0 12px;">标签即板块：每个帖子归属于一个板块，用于导航与数据看板。</p>
               <div class="row" style="gap:8px;margin-bottom:12px;">
-                <input id="tagName" placeholder="标签名" style="flex:1;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
-                <input id="tagColor" type="color" value="#0f6cbd" style="width:42px;height:34px;border:1px solid var(--border);border-radius:6px;background:var(--surface);">
-                <button class="btn primary" id="tagAdd">添加</button>
+                <input id="boardName" placeholder="板块名" style="flex:1;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                <input id="boardDesc" placeholder="简介（可选）" style="flex:1;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                <input id="boardSort" type="number" value="0" placeholder="排序" style="width:72px;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">
+                <button class="btn primary" id="boardAdd">添加</button>
               </div>
-              <div id="tagList"></div>
+              <div id="boardList"></div>
             </div>
             <div class="card">
               <h2>说明</h2>
-              <p class="muted" style="line-height:1.7;">标签用于给帖子分类，可在「帖子管理」里给每条帖子勾选标签。点击列表中的标签可编辑名称 / 颜色，删除会同时解除相关帖子关联。</p>
+              <p class="muted" style="line-height:1.7;">板块即标签。新增板块会立即出现在发帖时的板块列表中；编辑可改名称 / 简介 / 排序；删除板块前需先将该板块下的帖子迁移或删除（避免误删帖子）。</p>
             </div>
           </div>
         </section>

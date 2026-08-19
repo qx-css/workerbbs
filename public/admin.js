@@ -29,7 +29,7 @@
   }
 
   /* ===== 面板切换 ===== */
-  const TITLES = { overview: '概览', site: '站点设置', users: '用户管理', threads: '帖子管理', tags: '标签', invite: '邀请码', broadcast: '群发邮件', groups: '群组', mail: '邮件设置', realtime: '实时同步', theme: '主题', plugins: '插件' };
+  const TITLES = { overview: '概览', site: '站点设置', users: '用户管理', threads: '帖子管理', boards: '板块', invite: '邀请码', broadcast: '群发邮件', groups: '群组', mail: '邮件设置', realtime: '实时同步', theme: '主题', plugins: '插件' };
   function showPanel(name) {
     document.querySelectorAll('.snav').forEach((b) => b.classList.toggle('active', b.dataset.panel === name));
     document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('show', p.id === 'p-' + name));
@@ -46,7 +46,7 @@
       ['send', '回复', s.replies],
       ['logout', '已封禁', s.banned],
       ['navigation', '群组', s.groups],
-      ['tag', '标签', s.tags],
+      ['navigation', '板块', s.boards],
       ['key', '邀请码', s.invite_used + '/' + s.invite_total],
       ['chat', '私信', s.messages],
     ];
@@ -218,7 +218,7 @@
         '<tr><td>' + t.id + '</td><td>' + esc(String(t.title).slice(0, 60)) + '</td><td>' + t.board_id + '</td>'
         + '<td>' + (t.pinned ? '是' : '否') + '</td>'
         + '<td>' + (t.deleted ? '<span class="tag banned">已删除</span>' : '<span class="tag">正常</span>') + '</td>'
-        + '<td><button class="btn" data-tags="' + t.id + '" data-title="' + esc(String(t.title).slice(0, 40)) + '">标签</button> '
+        + '<td>'
         + '<button class="btn" data-pin="' + t.id + '">' + (t.pinned ? '取消置顶' : '置顶') + '</button> '
         + (t.deleted
           ? '<button class="btn" data-restore="' + t.id + '">恢复</button>'
@@ -226,7 +226,7 @@
         + '</td></tr>').join('')
         : '<tr><td colspan="6" class="muted" style="padding:20px;">还没有帖子</td></tr>')
       + '</tbody></table>';
-    document.querySelectorAll('[data-tags]').forEach((b) => b.onclick = () => openThreadTagModal(b.dataset.tags, b.dataset.title));
+    // 帖子标签按钮已移除（标签即板块，在「板块」面板管理）
     document.querySelectorAll('[data-pin]').forEach((b) => b.onclick = async () => {
       const t = data.threads.find((x) => String(x.id) === b.dataset.pin);
       await api('/api/admin/threads/' + b.dataset.pin, { method: 'PATCH', body: JSON.stringify({ pinned: t.pinned ? 0 : 1 }) });
@@ -282,36 +282,38 @@
     root.querySelector('[data-ok]').onclick = () => { if (onOk(root) !== false) close(); };
   }
 
-  /* ===== 标签管理 ===== */
-  async function renderTags() {
-    const el = document.getElementById('tagList');
-    let tags;
-    try { tags = (await api('/api/tags')).tags || []; }
+  /* ===== 板块管理（标签即板块） ===== */
+  async function renderBoards() {
+    const el = document.getElementById('boardList');
+    let boards;
+    try { boards = (await api('/api/admin/boards')).boards || []; }
     catch (e) { el.innerHTML = '<p class="muted">加载失败：' + esc(e.message) + '</p>'; return; }
-    if (!tags.length) { el.innerHTML = '<p class="muted">还没有标签，先在上方添加。</p>'; return; }
-    el.innerHTML = tags.map((t) =>
-      '<div class="tagitem"><span class="dotc" style="background:' + esc(t.color) + '"></span>'
-      + '<span class="nm">' + esc(t.name) + '</span><span class="meta"># ' + t.id + '</span><span class="sp"></span>'
-      + '<button class="btn" data-tedit="' + t.id + '" data-name="' + esc(t.name) + '" data-color="' + esc(t.color) + '">编辑</button>'
-      + '<button class="btn danger" data-tdel="' + t.id + '">删除</button></div>'
+    if (!boards.length) { el.innerHTML = '<p class="muted">还没有板块，先在上方添加。</p>'; return; }
+    el.innerHTML = boards.map((b) =>
+      '<div class="tagitem"><span class="nm">' + esc(b.name) + '</span>'
+      + '<span class="meta">' + (b.description ? esc(b.description) + ' · ' : '') + b.thread_count + ' 帖</span>'
+      + '<span class="meta">排序 ' + b.sort + '</span><span class="sp"></span>'
+      + '<button class="btn" data-bedit="' + b.id + '" data-name="' + esc(b.name) + '" data-desc="' + esc(b.description || '') + '" data-sort="' + b.sort + '">编辑</button>'
+      + '<button class="btn danger" data-bdel="' + b.id + '">删除</button></div>'
     ).join('');
-    el.querySelectorAll('[data-tedit]').forEach((b) => b.onclick = () => {
-      const id = b.dataset.tedit;
-      openAdminModal('编辑标签',
-        '<div class="row" style="gap:8px;margin-bottom:14px;">'
-        + '<input id="mTagName" value="' + esc(b.dataset.name) + '" style="flex:1;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);">'
-        + '<input id="mTagColor" type="color" value="' + esc(b.dataset.color) + '" style="width:42px;height:34px;border:1px solid var(--border);border-radius:6px;background:var(--surface);"></div>',
+    el.querySelectorAll('[data-bedit]').forEach((b) => b.onclick = () => {
+      const id = b.dataset.bedit;
+      openAdminModal('编辑板块',
+        '<div class="field"><label>名称</label><input id="mBoardName" value="' + esc(b.dataset.name) + '" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>'
+        + '<div class="field"><label>简介</label><input id="mBoardDesc" value="' + esc(b.dataset.desc) + '" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>'
+        + '<div class="field"><label>排序（越小越靠前）</label><input id="mBoardSort" type="number" value="' + esc(b.dataset.sort) + '" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);"></div>',
         () => {
-          const nn = document.getElementById('mTagName').value.trim();
-          const nc = document.getElementById('mTagColor').value;
-          if (!nn) { alert('标签名不能为空'); return false; }
-          api('/api/admin/tags/' + id, { method: 'PATCH', body: JSON.stringify({ name: nn, color: nc }) })
-            .then(() => renderTags()).catch((e) => alert(e.message));
+          const nn = document.getElementById('mBoardName').value.trim();
+          const nd = document.getElementById('mBoardDesc').value.trim();
+          const ns = Number(document.getElementById('mBoardSort').value) || 0;
+          if (!nn) { alert('板块名不能为空'); return false; }
+          api('/api/admin/boards/' + id, { method: 'PATCH', body: JSON.stringify({ name: nn, description: nd, sort: ns }) })
+            .then(() => renderBoards()).catch((e) => alert(e.message));
         });
     });
-    el.querySelectorAll('[data-tdel]').forEach((b) => b.onclick = async () => {
-      if (!confirm('删除该标签？相关帖子关联会一并解除。')) return;
-      try { await api('/api/admin/tags/' + b.dataset.tdel, { method: 'DELETE' }); renderTags(); renderStats(); }
+    el.querySelectorAll('[data-bdel]').forEach((b) => b.onclick = async () => {
+      if (!confirm('删除该板块？注意：板块下还有帖子时无法删除。')) return;
+      try { await api('/api/admin/boards/' + b.dataset.bdel, { method: 'DELETE' }); renderBoards(); renderStats(); }
       catch (e) { alert(e.message); }
     });
   }
@@ -384,26 +386,7 @@
     });
   }
 
-  /* ===== 帖子标签分配弹窗 ===== */
-  async function openThreadTagModal(threadId, title) {
-    let all;
-    try { all = (await api('/api/tags')).tags || []; }
-    catch (e) { alert(e.message); return; }
-    if (!all.length) { alert('请先在「标签」面板创建标签'); return; }
-    let cur = [];
-    try { const d = await api('/api/threads/' + threadId); cur = (d.thread.tags || []).map((t) => t.id); }
-    catch (e) {}
-    const chips = all.map((t) =>
-      '<span class="pick' + (cur.indexOf(t.id) >= 0 ? ' on' : '') + '" data-id="' + t.id + '">'
-      + '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:' + esc(t.color) + ';margin-right:6px;"></span>' + esc(t.name) + '</span>'
-    ).join('');
-    openAdminModal('设置标签：' + (title || ('#' + threadId)), '<div class="chips">' + chips + '</div>', (root) => {
-      const ids = Array.from(root.querySelectorAll('.pick.on')).map((p) => Number(p.dataset.id));
-      api('/api/admin/threads/' + threadId + '/tags', { method: 'POST', body: JSON.stringify({ tag_ids: ids }) })
-        .then(() => {}).catch((e) => alert(e.message));
-    });
-    document.getElementById('adminModal').querySelectorAll('.pick').forEach((p) => p.onclick = () => p.classList.toggle('on'));
-  }
+  // 帖子标签分配弹窗已移除（标签即板块，板块管理在「板块」面板）
 
   /* ===== 用户群组分配弹窗 ===== */
   async function openUserGroupModal(userId, uname, current) {
@@ -426,7 +409,7 @@
 
   /* ===== WinUI 图标：侧栏 / 返回 / 旋转提示 ===== */
   function enhanceIcons() {
-    const navIcons = { overview: 'home', site: 'settings', users: 'person', threads: 'comment', tags: 'tag', invite: 'key', broadcast: 'send', groups: 'navigation', mail: 'send', realtime: 'share' };
+    const navIcons = { overview: 'home', site: 'settings', users: 'person', threads: 'comment', boards: 'tag', invite: 'key', broadcast: 'send', groups: 'navigation', mail: 'send', realtime: 'share' };
     document.querySelectorAll('.snav').forEach((b) => {
       const ic = navIcons[b.dataset.panel] || 'sparkle';
       const label = b.textContent.trim();
@@ -623,15 +606,18 @@
       } catch (e) { msg.textContent = e.message; }
     };
 
-    /* 标签：添加 */
-    document.getElementById('tagAdd').onclick = async () => {
-      const name = document.getElementById('tagName').value.trim();
-      const color = document.getElementById('tagColor').value;
-      if (!name) { alert('标签名不能为空'); return; }
+    /* 板块：添加 */
+    document.getElementById('boardAdd').onclick = async () => {
+      const name = document.getElementById('boardName').value.trim();
+      const description = document.getElementById('boardDesc').value.trim();
+      const sort = Number(document.getElementById('boardSort').value) || 0;
+      if (!name) { alert('板块名不能为空'); return; }
       try {
-        await api('/api/admin/tags', { method: 'POST', body: JSON.stringify({ name, color }) });
-        document.getElementById('tagName').value = '';
-        renderTags(); renderStats();
+        await api('/api/admin/boards', { method: 'POST', body: JSON.stringify({ name, description, sort }) });
+        document.getElementById('boardName').value = '';
+        document.getElementById('boardDesc').value = '';
+        document.getElementById('boardSort').value = '0';
+        renderBoards(); renderStats();
       } catch (e) { alert(e.message); }
     };
 
@@ -695,6 +681,6 @@
       } catch (e) { alert(e.message); }
     };
 
-    await Promise.all([renderStats(), renderUsers(), renderThreads(), Promise.resolve(renderTags()), Promise.resolve(renderInvite()), Promise.resolve(renderBroadcast()), Promise.resolve(renderGroups()), Promise.resolve(renderMail()), Promise.resolve(renderRealtime()), Promise.resolve(renderTheme()), Promise.resolve(renderPlugins())]);
+    await Promise.all([renderStats(), renderUsers(), renderThreads(), Promise.resolve(renderBoards()), Promise.resolve(renderInvite()), Promise.resolve(renderBroadcast()), Promise.resolve(renderGroups()), Promise.resolve(renderMail()), Promise.resolve(renderRealtime()), Promise.resolve(renderTheme()), Promise.resolve(renderPlugins())]);
   })();
 })();

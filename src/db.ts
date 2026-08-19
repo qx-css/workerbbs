@@ -496,44 +496,23 @@ export async function getQuotedReplies(db: D1Database, ids: number[]): Promise<R
   return map;
 }
 
-/* ============ 标签（管理员编辑） ============ */
+/* ============ 板块管理（管理员编辑，标签即板块） ============ */
 
-export interface TagRow { id: number; name: string; color: string; }
-
-export async function listTags(db: D1Database): Promise<TagRow[]> {
-  return (await db.prepare('SELECT * FROM tags ORDER BY id ASC').all()).results as unknown as TagRow[];
-}
-export async function createTag(db: D1Database, name: string, color: string): Promise<number> {
-  const info = await db.prepare('INSERT INTO tags (name, color, created_at) VALUES (?, ?, ?)').bind(name, color, Date.now()).run();
+export async function createBoard(db: D1Database, name: string, description = '', sort = 0): Promise<number> {
+  const info = await db.prepare('INSERT INTO boards (name, description, sort, created_at) VALUES (?, ?, ?, ?)').bind(name, description, sort, Date.now()).run();
   return Number(info.meta.last_row_id);
 }
-export async function updateTag(db: D1Database, id: number, name: string, color: string): Promise<void> {
-  await db.prepare('UPDATE tags SET name = ?, color = ? WHERE id = ?').bind(name, color, id).run();
+export async function updateBoard(db: D1Database, id: number, fields: { name?: string; description?: string; sort?: number }): Promise<void> {
+  const keys = Object.keys(fields) as (keyof typeof fields)[];
+  if (!keys.length) return;
+  const set = keys.map((k) => `${k} = ?`).join(', ');
+  await db.prepare(`UPDATE boards SET ${set} WHERE id = ?`).bind(...keys.map((k) => fields[k]), id).run();
 }
-export async function deleteTag(db: D1Database, id: number): Promise<void> {
-  await db.prepare('DELETE FROM tags WHERE id = ?').bind(id).run();
-  await db.prepare('DELETE FROM thread_tags WHERE tag_id = ?').bind(id).run();
+export async function deleteBoard(db: D1Database, id: number): Promise<void> {
+  await db.prepare('DELETE FROM boards WHERE id = ?').bind(id).run();
 }
-export async function getTagsByThreadIds(db: D1Database, threadIds: number[]): Promise<Record<number, TagRow[]>> {
-  const uniq = Array.from(new Set(threadIds.filter((i) => i > 0)));
-  const map: Record<number, TagRow[]> = {};
-  if (!uniq.length) return map;
-  const rows = (await db.prepare('SELECT tt.thread_id, t.id, t.name, t.color FROM thread_tags tt JOIN tags t ON t.id = tt.tag_id WHERE tt.thread_id IN (' + uniq.map(() => '?').join(',') + ')').bind(...uniq).all()).results as unknown as { thread_id: number; id: number; name: string; color: string }[];
-  for (const r of rows) {
-    if (!map[r.thread_id]) map[r.thread_id] = [];
-    map[r.thread_id].push({ id: r.id, name: r.name, color: r.color });
-  }
-  return map;
-}
-export async function setThreadTags(db: D1Database, threadId: number, tagIds: number[]): Promise<void> {
-  await db.prepare('DELETE FROM thread_tags WHERE thread_id = ?').bind(threadId).run();
-  for (const tid of Array.from(new Set(tagIds.filter((i) => i > 0)))) {
-    await db.prepare('INSERT OR IGNORE INTO thread_tags (thread_id, tag_id) VALUES (?, ?)').bind(threadId, tid).run();
-  }
-}
-export async function listThreadsByTag(db: D1Database, tagId: number, page = 1, pageSize = 20): Promise<Thread[]> {
-  const offset = (Math.max(1, page) - 1) * pageSize;
-  return (await db.prepare('SELECT t.* FROM threads t JOIN thread_tags tt ON tt.thread_id = t.id WHERE tt.tag_id = ? AND t.deleted = 0 ORDER BY t.id DESC LIMIT ? OFFSET ?').bind(tagId, pageSize, offset).all()).results as unknown as Thread[];
+export async function countThreadsByBoard(db: D1Database, id: number): Promise<number> {
+  return (await db.prepare('SELECT COUNT(*) c FROM threads WHERE board_id = ?').bind(id).first<{ c: number }>())?.c ?? 0;
 }
 
 /* ============ 邀请码注册 ============ */
